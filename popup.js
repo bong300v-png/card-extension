@@ -1,3 +1,172 @@
+// ========== I18N ==========
+const I18N = {
+  en: {
+    appName: 'CARDFILL PRO',
+    enterBin: 'Enter BIN',
+    binPlaceholder: 'Enter BIN (6–9 digits)',
+    date: 'Date',
+    cvv: 'CVV',
+    random: 'Random',
+    month: 'Month',
+    year: 'Year',
+    qty: 'Qty',
+    selectCountry: 'Select Country',
+    generate: 'Generate',
+    validate: 'Validate',
+    binCheck: 'BIN Check',
+    genFill: 'GEN & FILL',
+    genOnly: 'Gen Only',
+    copy: 'Copy',
+    copied: 'Copied',
+    exp: 'Exp',
+    type: 'Type',
+    brand: 'Brand',
+    bank: 'Bank',
+    country: 'Country',
+    category: 'Category',
+    currency: 'Currency',
+    prepaid: 'Prepaid',
+    credit: 'Credit',
+    debit: 'Debit',
+    statusGenerated: 'Generated {n} card{s}',
+    statusValidPassed: 'Luhn check passed',
+    statusValidFailed: 'Luhn check failed',
+    statusBinLoading: 'Looking up BIN...',
+    statusBinLoaded: 'BIN info loaded',
+    statusBinFailed: 'BIN lookup failed',
+    statusBinFetching: 'Fetching real address data...',
+    statusFilling: 'Filling form...',
+    statusFilled: 'Filled {n} field{s}',
+    statusNothingFilled: 'No form fields found to fill',
+    statusInjectFail: 'Cannot inject script into this page',
+    statusFillError: 'Fill failed — try reloading the page',
+    errEnterFullCard: 'Enter a full card number to validate',
+    validCard: 'Valid card number',
+    invalidCard: 'Invalid card number (Luhn check failed)',
+    binNotFound: 'BIN not found or API unavailable',
+    binLabel: 'BIN'
+  },
+  vi: {
+    appName: 'CARDFILL PRO',
+    enterBin: 'Nhập BIN',
+    binPlaceholder: 'Nhập BIN (6–9 chữ số)',
+    date: 'Ngày',
+    cvv: 'CVV',
+    random: 'Ngẫu nhiên',
+    month: 'Tháng',
+    year: 'Năm',
+    qty: 'SL',
+    selectCountry: 'Chọn quốc gia',
+    generate: 'Tạo thẻ',
+    validate: 'Kiểm tra',
+    binCheck: 'Kiểm tra BIN',
+    genFill: 'TẠO & ĐIỀN',
+    genOnly: 'Chỉ tạo',
+    copy: 'Sao chép',
+    copied: 'Đã chép',
+    exp: 'HSD',
+    type: 'Loại',
+    brand: 'Thương hiệu',
+    bank: 'Ngân hàng',
+    country: 'Quốc gia',
+    category: 'Phân loại',
+    currency: 'Tiền tệ',
+    prepaid: 'Trả trước',
+    credit: 'Tín dụng',
+    debit: 'Ghi nợ',
+    statusGenerated: 'Đã tạo {n} thẻ',
+    statusValidPassed: 'Luhn hợp lệ',
+    statusValidFailed: 'Luhn không hợp lệ',
+    statusBinLoading: 'Đang tra cứu BIN...',
+    statusBinLoaded: 'Đã tải thông tin BIN',
+    statusBinFailed: 'Tra cứu BIN thất bại',
+    statusBinFetching: 'Đang lấy địa chỉ thật...',
+    statusFilling: 'Đang điền form...',
+    statusFilled: 'Đã điền {n} trường',
+    statusNothingFilled: 'Không tìm thấy trường nào để điền',
+    statusInjectFail: 'Trang này không cho phép inject script',
+    statusFillError: 'Không điền được — thử reload trang rồi bấm lại',
+    errEnterFullCard: 'Nhập số thẻ đầy đủ để kiểm tra',
+    validCard: 'Số thẻ hợp lệ',
+    invalidCard: 'Số thẻ không hợp lệ (Luhn fail)',
+    binNotFound: 'Không tìm thấy BIN hoặc API không khả dụng',
+    binLabel: 'BIN'
+  }
+};
+
+const SUPPORTED_LOCALES = ['en', 'vi'];
+let currentLocale = 'en';
+
+function t(key, vars) {
+  let s = (I18N[currentLocale] && I18N[currentLocale][key]) || I18N.en[key] || key;
+  if (vars) {
+    for (const k in vars) {
+      const v = vars[k];
+      s = s.replace(new RegExp('\\{' + k + '\\}', 'g'), v);
+      // Pluralization helpers: replace {s} with 's' when n != 1
+      if (k === 'n') {
+        s = s.replace(/\{s\}/g, Number(v) === 1 ? '' : 's');
+      }
+    }
+  }
+  return s;
+}
+
+function detectInitialLocale() {
+  try {
+    const saved = localStorage.getItem('cf_lang');
+    if (saved && SUPPORTED_LOCALES.includes(saved)) return saved;
+  } catch (_) {}
+  const uiLang =
+    (typeof chrome !== 'undefined' && chrome.i18n && chrome.i18n.getUILanguage && chrome.i18n.getUILanguage()) ||
+    (navigator.language || 'en');
+  const short = String(uiLang).toLowerCase().split(/[-_]/)[0];
+  return SUPPORTED_LOCALES.includes(short) ? short : 'en';
+}
+
+function applyI18n() {
+  document.documentElement.lang = currentLocale;
+  document.querySelectorAll('[data-i18n]').forEach(el => {
+    const k = el.getAttribute('data-i18n');
+    el.textContent = t(k);
+  });
+  document.querySelectorAll('[data-i18n-placeholder]').forEach(el => {
+    const k = el.getAttribute('data-i18n-placeholder');
+    el.setAttribute('placeholder', t(k));
+  });
+  const badge = document.getElementById('langBadge');
+  if (badge) badge.textContent = currentLocale.toUpperCase();
+}
+
+function setLocale(locale) {
+  if (!SUPPORTED_LOCALES.includes(locale)) return;
+  currentLocale = locale;
+  try { localStorage.setItem('cf_lang', locale); } catch (_) {}
+  applyI18n();
+}
+
+// ========== THEME ==========
+function applyTheme(theme) {
+  const isDark = theme === 'dark';
+  document.documentElement.classList.toggle('dark-mode', isDark);
+  document.body.classList.toggle('dark-mode', isDark);
+  const btn = document.getElementById('themeBtn');
+  if (btn) btn.textContent = isDark ? '☀️' : '🌙';
+}
+
+function setTheme(theme) {
+  try { localStorage.setItem('cf_theme', theme); } catch (_) {}
+  applyTheme(theme);
+}
+
+function detectInitialTheme() {
+  try {
+    const saved = localStorage.getItem('cf_theme');
+    if (saved === 'dark' || saved === 'light') return saved;
+  } catch (_) {}
+  return window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+}
+
 // ========== RANDOM BIN PREFIXES ==========
 const KNOWN_BINS = [
   '400000','411111','431274','438857','446200','453978','461046','471624','476173','491427',
@@ -7,11 +176,9 @@ const KNOWN_BINS = [
 ];
 
 function randomBIN() {
-  // Randomly pick a known prefix OR generate a plausible one
   if (Math.random() < 0.5) {
     return KNOWN_BINS[Math.floor(Math.random() * KNOWN_BINS.length)];
   }
-  // Generate random Visa/MC/Discover prefix
   const prefixes = ['4', '51', '52', '53', '54', '55', '6011', '65'];
   let bin = prefixes[Math.floor(Math.random() * prefixes.length)];
   while (bin.length < 6) bin += Math.floor(Math.random() * 10);
@@ -210,11 +377,21 @@ const EMAIL_DOMAINS = ['gmail.com','yahoo.com','outlook.com','hotmail.com','prot
 
 // ========== UTILS ==========
 function rand(min, max) { return Math.floor(Math.random() * (max - min + 1)) + min; }
-function rndChar() { return 'ABCDEFGHJKLMNPQRSTUVWXYZ'[rand(0, 22)]; }
 function pick(arr) { return arr[rand(0, arr.length - 1)]; }
+
+function escapeHtml(str) {
+  if (str == null) return '';
+  return String(str)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
 
 // ========== LUHN ==========
 function luhnCheck(number) {
+  if (!/^\d+$/.test(number)) return false;
   let sum = 0, alt = false;
   for (let i = number.length - 1; i >= 0; i--) {
     let n = parseInt(number[i], 10);
@@ -251,7 +428,6 @@ function generateCard(bin, opts = {}) {
     if (luhnCheck(number + d)) { number = number + d; break; }
   }
 
-  // Expiry
   let month, year;
   if (opts.dateAuto || !opts.month) {
     const y = new Date().getFullYear() + rand(1, 5);
@@ -262,7 +438,6 @@ function generateCard(bin, opts = {}) {
     year = String(opts.year).padStart(2, '0');
   }
 
-  // CVV
   let cvv;
   if (opts.cvvAuto || !opts.cvv) {
     cvv = Array.from({ length: info.cvvLen }, () => rand(0, 9)).join('');
@@ -283,8 +458,7 @@ function generateCard(bin, opts = {}) {
 // ========== FAKE DATA ==========
 async function generateFakeData(countryCode) {
   const c = COUNTRY_DATA[countryCode] || COUNTRY_DATA.US;
-  
-  // Base data using our hardcoded fallback
+
   let firstName = pick(FIRST_NAMES);
   let lastName = pick(LAST_NAMES);
   let streetNum = rand(1, 999);
@@ -295,12 +469,11 @@ async function generateFakeData(countryCode) {
   let zip = loc.zip || '';
   let phone = c.phone ? c.phone() : '';
 
-  // Supported randomuser.me nationalities
-  const supportedNats = ['AU', 'BR', 'CA', 'CH', 'DE', 'DK', 'ES', 'FI', 'FR', 'GB', 'IE', 'IN', 'IR', 'MX', 'NL', 'NO', 'NZ', 'RS', 'TR', 'UA', 'US'];
-  
+  const supportedNats = ['AU','BR','CA','CH','DE','DK','ES','FI','FR','GB','IE','IN','IR','MX','NL','NO','NZ','RS','TR','UA','US'];
+
   if (supportedNats.includes(countryCode)) {
     try {
-      setStatus('⏳ Fetching real address data...', 'loading');
+      setStatus(t('statusBinFetching'), 'loading');
       const res = await fetch(`https://randomuser.me/api/?nat=${countryCode.toLowerCase()}`);
       if (res.ok) {
         const data = await res.json();
@@ -330,7 +503,7 @@ async function generateFakeData(countryCode) {
     city: city,
     state: state,
     zip: zip,
-    age: rand(18, 45),              // random age 18–45
+    age: rand(18, 45),
     countryCode: countryCode,
     countryName: c.name
   };
@@ -339,49 +512,92 @@ async function generateFakeData(countryCode) {
 // ========== UI HELPERS ==========
 function setStatus(msg, type = 'info') {
   const el = document.getElementById('statusBar');
+  if (!el) return;
   el.className = `status-bar ${type}`;
-  el.innerHTML = type === 'loading'
-    ? `<span class="loader"></span> ${msg}`
-    : msg;
+  if (type === 'loading') {
+    el.innerHTML = '';
+    const loader = document.createElement('span');
+    loader.className = 'loader';
+    el.appendChild(loader);
+    el.appendChild(document.createTextNode(' ' + msg));
+  } else {
+    el.textContent = msg;
+  }
 }
 
 function clearResults() {
   document.getElementById('results').innerHTML = '';
 }
 
-function addResult(html) {
-  document.getElementById('results').insertAdjacentHTML('beforeend', html);
-}
-
 function copyText(text, btnEl) {
+  const restore = btnEl.dataset.label || btnEl.textContent;
+  btnEl.dataset.label = restore;
   navigator.clipboard.writeText(text).then(() => {
-    btnEl.textContent = '✓ Copied';
+    btnEl.textContent = '✓ ' + t('copied');
     btnEl.classList.add('copied');
     setTimeout(() => {
-      btnEl.textContent = '📋 Copy';
+      btnEl.textContent = '📋 ' + t('copy');
       btnEl.classList.remove('copied');
+    }, 1500);
+  }).catch(() => {
+    btnEl.textContent = '✗';
+    setTimeout(() => {
+      btnEl.textContent = '📋 ' + t('copy');
     }, 1500);
   });
 }
 
 function typeClass(type) {
-  const map = { Visa: 'type-visa', Mastercard: 'type-mastercard', Amex: 'type-amex', Discover: 'type-discover' };
+  const map = {
+    Visa: 'type-visa',
+    Mastercard: 'type-mastercard',
+    Amex: 'type-amex',
+    Discover: 'type-discover',
+    JCB: 'type-jcb'
+  };
   return map[type] || 'type-unknown';
 }
 
-function renderCard(card, idx = 0) {
-  return `
-    <div class="card-item">
-      <div class="card-number-row">
-        <span class="card-number">${card.formatted}</span>
-        <span class="card-type-badge ${typeClass(card.type)}">${card.type}</span>
-        <button class="copy-btn" onclick="copyText('${card.number}|${card.month}/${card.year}|${card.cvv}', this)">📋 Copy</button>
-      </div>
-      <div class="card-details">
-        <div class="card-detail">Exp: <span>${card.month}/${card.year}</span></div>
-        <div class="card-detail">CVV: <span>${card.cvv}</span></div>
-      </div>
-    </div>`;
+function renderCard(card) {
+  const item = document.createElement('div');
+  item.className = 'card-item';
+
+  const row = document.createElement('div');
+  row.className = 'card-number-row';
+
+  const num = document.createElement('span');
+  num.className = 'card-number';
+  num.textContent = card.formatted;
+  row.appendChild(num);
+
+  const badge = document.createElement('span');
+  badge.className = `card-type-badge ${typeClass(card.type)}`;
+  badge.textContent = card.type;
+  row.appendChild(badge);
+
+  const btn = document.createElement('button');
+  btn.type = 'button';
+  btn.className = 'copy-btn';
+  btn.textContent = '📋 ' + t('copy');
+  btn.addEventListener('click', () => {
+    copyText(`${card.number}|${card.month}/${card.year}|${card.cvv}`, btn);
+  });
+  row.appendChild(btn);
+
+  item.appendChild(row);
+
+  const details = document.createElement('div');
+  details.className = 'card-details';
+  details.innerHTML =
+    `<div class="card-detail">${t('exp')}: <span>${escapeHtml(card.month)}/${escapeHtml(card.year)}</span></div>` +
+    `<div class="card-detail">CVV: <span>${escapeHtml(card.cvv)}</span></div>`;
+  item.appendChild(details);
+
+  return item;
+}
+
+function appendResult(node) {
+  document.getElementById('results').appendChild(node);
 }
 
 // ========== GET OPTIONS ==========
@@ -394,7 +610,7 @@ function getOptions() {
     month: document.getElementById('monthInput').value.trim(),
     year: document.getElementById('yearInput').value.trim(),
     cvv: document.getElementById('cvvInput').value.trim(),
-    qty: Math.min(50, Math.max(1, parseInt(document.getElementById('qtyInput').value) || 1)),
+    qty: Math.min(50, Math.max(1, parseInt(document.getElementById('qtyInput').value, 10) || 1)),
     country: document.getElementById('countrySelect').value
   };
 }
@@ -402,14 +618,19 @@ function getOptions() {
 // ========== GENERATE ==========
 function doGenerate() {
   const opts = getOptions();
+  const binInput = document.getElementById('binInput');
   let binWasAuto = false;
-  if (opts.bin.length < 6) {
-    // Auto-generate a random BIN
+
+  // Random mode always overrides BIN with a random one
+  if (opts.random || opts.bin.length < 6) {
     opts.bin = randomBIN();
-    binWasAuto = true;
-    document.getElementById('binInput').value = opts.bin;
-    document.getElementById('binInput').style.borderColor = 'rgba(168,85,247,0.7)';
-    setTimeout(() => document.getElementById('binInput').style.borderColor = '', 800);
+    binWasAuto = !opts.random;
+    binInput.value = opts.bin;
+    binInput.style.borderColor = 'rgba(168,85,247,0.7)';
+    setTimeout(() => { binInput.style.borderColor = ''; }, 800);
+  } else if (opts.bin.length > 9) {
+    // Accept pastes of full card numbers — use only the first 9 digits as BIN
+    opts.bin = opts.bin.slice(0, 9);
   }
 
   clearResults();
@@ -418,12 +639,11 @@ function doGenerate() {
     cards.push(generateCard(opts.bin, opts));
   }
 
-  cards.forEach((c, i) => addResult(renderCard(c, i)));
-  setStatus(`✅ Generated ${cards.length} card${cards.length > 1 ? 's' : ''}`, 'success');
+  cards.forEach((c) => appendResult(renderCard(c)));
+  setStatus(t('statusGenerated', { n: cards.length }), 'success');
 
-  // Only clear BIN if it was auto-generated; keep user-entered BIN
   if (binWasAuto) {
-    document.getElementById('binInput').value = '';
+    binInput.value = '';
   }
   return cards;
 }
@@ -432,17 +652,23 @@ function doGenerate() {
 function doValidate() {
   const opts = getOptions();
   const num = opts.bin.replace(/\s/g, '');
-  if (num.length < 13) { setStatus('⚠️ Nhập số thẻ đầy đủ để validate', 'error'); return; }
+  if (num.length < 13) {
+    setStatus(t('errEnterFullCard'), 'error');
+    return;
+  }
 
   clearResults();
   const valid = luhnCheck(num);
   const info = getCardType(num.slice(0, 6));
-  addResult(`
-    <div class="validate-result ${valid ? 'validate-ok' : 'validate-fail'}">
-      ${valid ? '✅ Valid card number' : '❌ Invalid card number (Luhn check failed)'}
-      — ${info.type}
-    </div>`);
-  setStatus(valid ? '✅ Luhn check passed' : '❌ Luhn check failed', valid ? 'success' : 'error');
+
+  const wrap = document.createElement('div');
+  wrap.className = `validate-result ${valid ? 'validate-ok' : 'validate-fail'}`;
+  wrap.textContent =
+    (valid ? '✅ ' : '❌ ') +
+    (valid ? t('validCard') : t('invalidCard')) +
+    ' — ' + info.type;
+  appendResult(wrap);
+  setStatus(valid ? '✅ ' + t('statusValidPassed') : '❌ ' + t('statusValidFailed'), valid ? 'success' : 'error');
 }
 
 // ========== BIN CHECK ==========
@@ -452,10 +678,13 @@ async function doBinCheck() {
   if (bin.length < 6) {
     bin = randomBIN();
     document.getElementById('binInput').value = bin;
+  } else {
+    // Surface the truncation in the input so it's clear what was used
+    document.getElementById('binInput').value = bin;
   }
 
   clearResults();
-  setStatus('🔍 Looking up BIN...', 'loading');
+  setStatus('🔍 ' + t('statusBinLoading'), 'loading');
 
   try {
     const res = await fetch(`https://lookup.binlist.net/${bin}`, {
@@ -464,31 +693,50 @@ async function doBinCheck() {
     if (!res.ok) throw new Error('Not found');
     const data = await res.json();
 
-    addResult(`
-      <div class="bin-info">
-        <div class="bin-info-title">🔍 BIN ${bin} — ${data.scheme?.toUpperCase() || 'Unknown'}</div>
-        <div class="bin-info-grid">
-          <div class="bin-info-row">Type: <span>${data.type || '-'}</span></div>
-          <div class="bin-info-row">Brand: <span>${data.brand || data.scheme || '-'}</span></div>
-          <div class="bin-info-row">Bank: <span>${data.bank?.name || '-'}</span></div>
-          <div class="bin-info-row">Country: <span>${data.country?.name || '-'} ${data.country?.emoji || ''}</span></div>
-          <div class="bin-info-row">Category: <span>${data.prepaid ? 'Prepaid' : (data.type === 'credit' ? 'Credit' : 'Debit')}</span></div>
-          <div class="bin-info-row">Currency: <span>${data.country?.currency || '-'}</span></div>
-        </div>
-      </div>`);
-    setStatus('✅ BIN info loaded', 'success');
+    const wrap = document.createElement('div');
+    wrap.className = 'bin-info';
+
+    const title = document.createElement('div');
+    title.className = 'bin-info-title';
+    title.textContent = `🔍 ${t('binLabel')} ${bin} — ${(data.scheme || 'Unknown').toUpperCase()}`;
+    wrap.appendChild(title);
+
+    const grid = document.createElement('div');
+    grid.className = 'bin-info-grid';
+    const rows = [
+      [t('type'), data.type || '-'],
+      [t('brand'), data.brand || data.scheme || '-'],
+      [t('bank'), data.bank?.name || '-'],
+      [t('country'), `${data.country?.name || '-'} ${data.country?.emoji || ''}`.trim()],
+      [t('category'), data.prepaid ? t('prepaid') : (data.type === 'credit' ? t('credit') : t('debit'))],
+      [t('currency'), data.country?.currency || '-']
+    ];
+    rows.forEach(([k, v]) => {
+      const r = document.createElement('div');
+      r.className = 'bin-info-row';
+      r.innerHTML = `${escapeHtml(k)}: <span>${escapeHtml(v)}</span>`;
+      grid.appendChild(r);
+    });
+    wrap.appendChild(grid);
+    appendResult(wrap);
+    setStatus('✅ ' + t('statusBinLoaded'), 'success');
   } catch (e) {
-    addResult(`<div class="validate-result validate-fail">❌ BIN not found or API unavailable</div>`);
-    setStatus('❌ BIN lookup failed', 'error');
+    const fail = document.createElement('div');
+    fail.className = 'validate-result validate-fail';
+    fail.textContent = '❌ ' + t('binNotFound');
+    appendResult(fail);
+    setStatus('❌ ' + t('statusBinFailed'), 'error');
   }
 }
 
 // ========== GEN & FILL ==========
 async function doGenFill() {
   const opts = getOptions();
-  if (opts.bin.length < 6) {
+  if (opts.random || opts.bin.length < 6) {
     opts.bin = randomBIN();
     document.getElementById('binInput').value = opts.bin;
+  } else if (opts.bin.length > 9) {
+    opts.bin = opts.bin.slice(0, 9);
   }
 
   const card = generateCard(opts.bin, opts);
@@ -500,17 +748,16 @@ async function doGenFill() {
     year: card.year,
     cvv: card.cvv,
     ...fakeData,
-    countryCode: opts.country,          // ISO code from select (US/ES/GB...)
+    countryCode: opts.country,
     countryName: (COUNTRY_DATA[opts.country] || COUNTRY_DATA.US).name
   };
 
-  setStatus('⚡ Filling form...', 'loading');
+  setStatus('⚡ ' + t('statusFilling'), 'loading');
   clearResults();
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-    // Inject content script
     try {
       await chrome.scripting.executeScript({
         target: { tabId: tab.id, allFrames: true },
@@ -522,62 +769,79 @@ async function doGenFill() {
     try {
       response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_FORM', data: fillData });
     } catch (msgErr) {
-      // Content script not reachable (chrome:// pages, etc.)
-      setStatus('⚠️ Trang này không cho phép inject script', 'error');
+      setStatus('⚠️ ' + t('statusInjectFail'), 'error');
       return;
     }
 
-    // Show card info
-    addResult(renderCard(card));
+    appendResult(renderCard(card));
 
-    // Build fill summary from results
     const results = response?.results || [];
     const filled  = results.filter(r => r.status === 'ok').map(r => r.field);
     const skipped = results.filter(r => r.status === 'skip').map(r => r.field);
 
-    const summaryRows = [
-      `<div class="bin-info-row">Name: <span>${fillData.name}</span></div>`,
-      `<div class="bin-info-row">Email: <span>${fillData.email}</span></div>`,
-      `<div class="bin-info-row">Phone: <span>${fillData.phone}</span></div>`,
-      `<div class="bin-info-row">Address: <span>${fillData.address}${fillData.address2 ? ', ' + fillData.address2 : ''}</span></div>`,
-      `<div class="bin-info-row">City: <span>${fillData.city}</span></div>`,
-      `<div class="bin-info-row">ZIP: <span>${fillData.zip}</span></div>`,
-      `<div class="bin-info-row">Country: <span>${fillData.countryCode} — ${fillData.countryName}</span></div>`,
-    ].join('');
+    const summary = document.createElement('div');
+    summary.className = 'bin-info';
 
-    const statusLine = filled.length > 0
-      ? `<div style="font-size:10px;color:#10b981;margin-top:5px">✅ Filled: ${filled.join(', ')}</div>`
-      : '';
-    const skipLine = skipped.length > 0
-      ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">⏭ Not found: ${skipped.join(', ')}</div>`
-      : '';
+    const title = document.createElement('div');
+    title.className = 'bin-info-title';
+    title.textContent = '📋 Fill Data';
+    summary.appendChild(title);
 
-    addResult(`
-      <div class="bin-info">
-        <div class="bin-info-title">📋 Fill Data</div>
-        <div class="bin-info-grid">${summaryRows}</div>
-        ${statusLine}${skipLine}
-      </div>`);
+    const grid = document.createElement('div');
+    grid.className = 'bin-info-grid';
+    const rows = [
+      ['Name', fillData.name],
+      ['Email', fillData.email],
+      ['Phone', fillData.phone],
+      ['Address', fillData.address + (fillData.address2 ? ', ' + fillData.address2 : '')],
+      ['City', fillData.city],
+      ['ZIP', fillData.zip],
+      [t('country'), `${fillData.countryCode} — ${fillData.countryName}`]
+    ];
+    rows.forEach(([k, v]) => {
+      const r = document.createElement('div');
+      r.className = 'bin-info-row';
+      r.innerHTML = `${escapeHtml(k)}: <span>${escapeHtml(v)}</span>`;
+      grid.appendChild(r);
+    });
+    summary.appendChild(grid);
+
+    if (filled.length > 0) {
+      const ok = document.createElement('div');
+      ok.className = 'bin-info-foot ok';
+      ok.textContent = '✅ Filled: ' + filled.join(', ');
+      summary.appendChild(ok);
+    }
+    if (skipped.length > 0) {
+      const sk = document.createElement('div');
+      sk.className = 'bin-info-foot warn';
+      sk.textContent = '⏭ Not found: ' + skipped.join(', ');
+      summary.appendChild(sk);
+    }
+
+    appendResult(summary);
 
     const totalFilled = filled.length;
     if (totalFilled === 0) {
-      setStatus('⚠️ Không tìm thấy form field nào để fill', 'error');
+      setStatus('⚠️ ' + t('statusNothingFilled'), 'warning');
     } else {
-      setStatus(`✅ Filled ${totalFilled} field${totalFilled > 1 ? 's' : ''}`, 'success');
-      // Auto-close popup after successful fill so user can see the form
+      setStatus('✅ ' + t('statusFilled', { n: totalFilled }), 'success');
       setTimeout(() => window.close(), 1200);
     }
 
   } catch (e) {
-    // Never crash — just show soft warning
-    setStatus('⚠️ Không fill được — thử reload trang rồi bấm lại', 'error');
+    setStatus('⚠️ ' + t('statusFillError'), 'error');
     console.warn('GenFill error:', e);
   }
 }
 
 // ========== EVENT LISTENERS ==========
 document.addEventListener('DOMContentLoaded', () => {
-  // Restore last user-entered BIN (if any) and clear results on popup open
+  // i18n + theme bootstrap
+  currentLocale = detectInitialLocale();
+  applyI18n();
+  applyTheme(detectInitialTheme());
+
   const binInput = document.getElementById('binInput');
   binInput.value = '';
   try {
@@ -586,6 +850,7 @@ document.addEventListener('DOMContentLoaded', () => {
     });
   } catch (_) {}
   clearResults();
+
   // Toggle manual fields visibility based on checkbox state
   function updateManualRow() {
     const dateAuto = document.getElementById('dateAuto').checked;
@@ -596,10 +861,6 @@ document.addEventListener('DOMContentLoaded', () => {
     document.getElementById('monthInput').disabled = dateAuto;
     document.getElementById('yearInput').disabled = dateAuto;
     document.getElementById('cvvInput').disabled = cvvAuto;
-
-    document.getElementById('monthInput').style.opacity = dateAuto ? '0.4' : '1';
-    document.getElementById('yearInput').style.opacity = dateAuto ? '0.4' : '1';
-    document.getElementById('cvvInput').style.opacity = cvvAuto ? '0.4' : '1';
   }
 
   document.getElementById('dateAuto').addEventListener('change', updateManualRow);
@@ -607,11 +868,19 @@ document.addEventListener('DOMContentLoaded', () => {
   updateManualRow();
 
   // BIN input - only numbers + persist user-entered BIN
-  document.getElementById('binInput').addEventListener('input', function () {
+  binInput.addEventListener('input', function () {
     this.value = this.value.replace(/\D/g, '');
     try {
       chrome.storage?.local.set({ savedBin: this.value });
     } catch (_) {}
+  });
+
+  // Numeric guard for month/year/cvv inputs
+  ['monthInput', 'yearInput', 'cvvInput'].forEach(id => {
+    const el = document.getElementById(id);
+    el.addEventListener('input', function () {
+      this.value = this.value.replace(/\D/g, '');
+    });
   });
 
   // Buttons
@@ -621,17 +890,22 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('genFillBtn').addEventListener('click', doGenFill);
   document.getElementById('genOnlyBtn').addEventListener('click', doGenerate);
 
-  // Enter key on BIN input
-  document.getElementById('binInput').addEventListener('keydown', (e) => {
-    if (e.key === 'Enter') doGenerate();
+  // Enter key on BIN input triggers generate
+  binInput.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter') {
+      e.preventDefault();
+      doGenerate();
+    }
   });
 
-  // Theme toggle (light/dark placeholder)
+  // Theme toggle
   document.getElementById('themeBtn').addEventListener('click', () => {
-    document.getElementById('themeBtn').textContent =
-      document.getElementById('themeBtn').textContent === '🌙' ? '☀️' : '🌙';
+    const isDark = document.documentElement.classList.contains('dark-mode');
+    setTheme(isDark ? 'light' : 'dark');
   });
 
-  // Make copyText global
-  window.copyText = copyText;
+  // Language toggle (EN <-> VI)
+  document.getElementById('langBadge').addEventListener('click', () => {
+    setLocale(currentLocale === 'en' ? 'vi' : 'en');
+  });
 });

@@ -4,71 +4,107 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CardFill Pro</title>
-  <link rel="preconnect" href="https://fonts.googleapis.com">
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="popup.css">
+  <script>
+    // Apply saved theme before paint to avoid FOUC (Flash Of Unstyled Content)
+    try {
+      var t = localStorage.getItem('cf_theme');
+      if (t === 'dark') document.documentElement.classList.add('dark-mode');
+    } catch (_) {}
+  </script>
 </head>
 <body>
   <div class="container">
     <!-- Header -->
-    <div class="header">
-      <span class="logo">💳</span>
-      <span class="brand">CARDFILL PRO</span>
+    <header class="header" role="banner">
+      <span class="logo" aria-hidden="true">💳</span>
+      <span class="brand" data-i18n="appName">CARDFILL PRO</span>
       <div class="header-right">
-        <span class="badge" id="langBadge">GB</span>
-        <button class="icon-btn" id="themeBtn" title="Toggle theme">🌙</button>
+        <button class="badge lang-badge" id="langBadge" type="button"
+                title="Switch language" aria-label="Switch language">EN</button>
+        <button class="icon-btn" id="themeBtn" type="button"
+                title="Toggle theme" aria-label="Toggle theme">🌙</button>
       </div>
-    </div>
+    </header>
 
     <!-- BIN Input -->
     <div class="field-group">
-      <label class="label"><span class="label-icon">🏦</span> Enter BIN</label>
-      <input type="text" id="binInput" class="input" placeholder="Enter BIN (6–9 digits)" maxlength="9" autocomplete="off">
+      <label class="label" for="binInput">
+        <span class="label-icon" aria-hidden="true">🏦</span>
+        <span data-i18n="enterBin">Enter BIN</span>
+      </label>
+      <input type="text" id="binInput" class="input"
+             data-i18n-placeholder="binPlaceholder"
+             placeholder="Enter BIN (6–9 digits)"
+             maxlength="19" autocomplete="off" inputmode="numeric"
+             aria-describedby="binHelp">
     </div>
 
     <!-- Checkboxes -->
-    <div class="checkbox-row">
+    <div class="checkbox-row" role="group" aria-label="Generation options">
       <label class="cb-label">
         <input type="checkbox" id="dateAuto" checked>
-        <span class="cb-box"></span>
-        <span class="cb-icon">📅</span> Date
+        <span class="cb-box" aria-hidden="true"></span>
+        <span class="cb-icon" aria-hidden="true">📅</span>
+        <span data-i18n="date">Date</span>
       </label>
       <label class="cb-label">
         <input type="checkbox" id="cvvAuto" checked>
-        <span class="cb-box"></span>
-        <span class="cb-icon">🔒</span> CVV
+        <span class="cb-box" aria-hidden="true"></span>
+        <span class="cb-icon" aria-hidden="true">🔒</span>
+        <span data-i18n="cvv">CVV</span>
       </label>
       <label class="cb-label">
         <input type="checkbox" id="randomMode">
-        <span class="cb-box"></span>
-        <span class="cb-icon">🎲</span> Random
+        <span class="cb-box" aria-hidden="true"></span>
+        <span class="cb-icon" aria-hidden="true">🎲</span>
+        <span data-i18n="random">Random</span>
       </label>
     </div>
 
     <!-- Manual Date/CVV Row -->
     <div class="manual-row" id="manualRow">
       <div class="mini-field">
-        <label class="mini-label"><span>📅</span> Month</label>
-        <input type="text" id="monthInput" class="input mini" placeholder="MM" maxlength="2">
+        <label class="mini-label" for="monthInput">
+          <span aria-hidden="true">📅</span>
+          <span data-i18n="month">Month</span>
+        </label>
+        <input type="text" id="monthInput" class="input mini"
+               placeholder="MM" maxlength="2" inputmode="numeric" autocomplete="off">
       </div>
       <div class="mini-field">
-        <label class="mini-label"><span>📅</span> Year</label>
-        <input type="text" id="yearInput" class="input mini" placeholder="YY" maxlength="2">
+        <label class="mini-label" for="yearInput">
+          <span aria-hidden="true">📅</span>
+          <span data-i18n="year">Year</span>
+        </label>
+        <input type="text" id="yearInput" class="input mini"
+               placeholder="YY" maxlength="2" inputmode="numeric" autocomplete="off">
       </div>
       <div class="mini-field">
-        <label class="mini-label"><span>🔥</span> CVV</label>
-        <input type="text" id="cvvInput" class="input mini" placeholder="123" maxlength="4">
+        <label class="mini-label" for="cvvInput">
+          <span aria-hidden="true">🔥</span>
+          <span data-i18n="cvv">CVV</span>
+        </label>
+        <input type="text" id="cvvInput" class="input mini"
+               placeholder="123" maxlength="4" inputmode="numeric" autocomplete="off">
       </div>
     </div>
 
     <!-- Qty + Country Row -->
     <div class="two-col">
       <div class="field-group">
-        <label class="label"><span class="label-icon">🔢</span> Qty</label>
-        <input type="number" id="qtyInput" class="input" value="1" min="1" max="50">
+        <label class="label" for="qtyInput">
+          <span class="label-icon" aria-hidden="true">🔢</span>
+          <span data-i18n="qty">Qty</span>
+        </label>
+        <input type="number" id="qtyInput" class="input"
+               value="1" min="1" max="50" inputmode="numeric">
       </div>
-      <div class="field-group" style="flex:2">
-        <label class="label"><span class="label-icon">🌍</span> Select Country</label>
+      <div class="field-group two-col-wide">
+        <label class="label" for="countrySelect">
+          <span class="label-icon" aria-hidden="true">🌍</span>
+          <span data-i18n="selectCountry">Select Country</span>
+        </label>
         <select id="countrySelect" class="input select">
           <option value="US">🇺🇸 United States</option>
           <option value="ES" selected>🇪🇸 Spain</option>
@@ -91,19 +127,29 @@
 
     <!-- Action Buttons Row 1 -->
     <div class="btn-row">
-      <button class="btn btn-gen" id="generateBtn">⚡ Generate</button>
-      <button class="btn btn-validate" id="validateBtn">✅ Validate</button>
-      <button class="btn btn-bin" id="binCheckBtn">🔍 BIN Check</button>
+      <button class="btn btn-gen" id="generateBtn" type="button">
+        <span aria-hidden="true">⚡</span> <span data-i18n="generate">Generate</span>
+      </button>
+      <button class="btn btn-validate" id="validateBtn" type="button">
+        <span aria-hidden="true">✅</span> <span data-i18n="validate">Validate</span>
+      </button>
+      <button class="btn btn-bin" id="binCheckBtn" type="button">
+        <span aria-hidden="true">🔍</span> <span data-i18n="binCheck">BIN Check</span>
+      </button>
     </div>
 
     <!-- Action Buttons Row 2 -->
     <div class="btn-row">
-      <button class="btn btn-fill" id="genFillBtn">🔥 GEN &amp; FILL</button>
-      <button class="btn btn-genonly" id="genOnlyBtn">⚡ Gen Only</button>
+      <button class="btn btn-fill" id="genFillBtn" type="button">
+        <span aria-hidden="true">🔥</span> <span data-i18n="genFill">GEN &amp; FILL</span>
+      </button>
+      <button class="btn btn-genonly" id="genOnlyBtn" type="button">
+        <span aria-hidden="true">⚡</span> <span data-i18n="genOnly">Gen Only</span>
+      </button>
     </div>
 
     <!-- Status -->
-    <div class="status-bar" id="statusBar"></div>
+    <div class="status-bar" id="statusBar" role="status" aria-live="polite"></div>
 
     <!-- Results -->
     <div class="results" id="results"></div>
