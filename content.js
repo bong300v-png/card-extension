@@ -194,36 +194,34 @@
         const matched = lcKws.some(kw => text === kw || text.startsWith(kw) || text.includes(kw));
         if (!matched) continue;
 
-        // 1) label[for]
+        // 1) label[for] — explicit binding, always trustworthy
         if (labelEl.htmlFor) {
           const target = root.getElementById
             ? root.getElementById(labelEl.htmlFor)
             : document.getElementById(labelEl.htmlFor);
           if (target) push(target);
         }
-        // 2) input inside the label
+        // 2) input inside the label — the common <label>Text<input/></label> pattern
         const inner = labelEl.querySelector && labelEl.querySelector('input, select, textarea');
         if (inner) push(inner);
-        // 3) next siblings, up to 4 hops (input lives after the label)
-        let sib = labelEl.nextElementSibling;
-        for (let i = 0; i < 4 && sib; i++) {
-          if (sib.matches && sib.matches('input, select, textarea')) push(sib);
-          const found = sib.querySelector && sib.querySelector('input, select, textarea');
-          if (found) push(found);
-          sib = sib.nextElementSibling;
-        }
-        // 4) parent's next siblings (two-column layouts where label and input
-        //    sit in adjacent grid cells)
-        const parent = labelEl.parentElement;
-        if (parent) {
-          let psib = parent.nextElementSibling;
-          for (let i = 0; i < 3 && psib; i++) {
-            const found = psib.querySelector && psib.querySelector('input, select, textarea');
-            if (found) push(found);
-            psib = psib.nextElementSibling;
+        // 3) immediate next-sibling element. Only one hop, and only if the
+        //    sibling is itself an input OR a small wrapper that does NOT
+        //    contain its own label/legend (which would mean it's a separate
+        //    field). This prevents the label scanner from leaking across
+        //    sibling fieldsets / rows.
+        const sib = labelEl.nextElementSibling;
+        if (sib) {
+          if (sib.matches && sib.matches('input, select, textarea')) {
+            push(sib);
+          } else if (sib.querySelector) {
+            const hasNestedLabel = sib.querySelector('label, legend, [data-label]');
+            if (!hasNestedLabel) {
+              const found = sib.querySelector('input, select, textarea');
+              if (found) push(found);
+            }
           }
         }
-        // 5) aria-labelledby reverse lookup
+        // 4) aria-labelledby reverse lookup — explicit binding
         const labelId = labelEl.id;
         if (labelId) {
           const refs = document.querySelectorAll(`[aria-labelledby~="${labelId}"], [aria-describedby~="${labelId}"]`);
