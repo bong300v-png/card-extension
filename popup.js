@@ -40,11 +40,15 @@ const I18N = {
     statusNothingFilled: 'No form fields found to fill',
     statusInjectFail: 'Cannot inject script into this page',
     statusFillError: 'Fill failed — try reloading the page',
+    statusHostedCard: 'Card field is in a secure iframe — fill manually',
     errEnterFullCard: 'Enter a full card number to validate',
     validCard: 'Valid card number',
     invalidCard: 'Invalid card number (Luhn check failed)',
     binNotFound: 'BIN not found or API unavailable',
-    binLabel: 'BIN'
+    binLabel: 'BIN',
+    clear: 'Clear',
+    filledOk: 'Filled',
+    notFound: 'Not found'
   },
   vi: {
     appName: 'CARDFILL PRO',
@@ -86,11 +90,15 @@ const I18N = {
     statusNothingFilled: 'Không tìm thấy trường nào để điền',
     statusInjectFail: 'Trang này không cho phép inject script',
     statusFillError: 'Không điền được — thử reload trang rồi bấm lại',
+    statusHostedCard: 'Ô số thẻ nằm trong iframe bảo mật — điền tay',
     errEnterFullCard: 'Nhập số thẻ đầy đủ để kiểm tra',
     validCard: 'Số thẻ hợp lệ',
     invalidCard: 'Số thẻ không hợp lệ (Luhn fail)',
     binNotFound: 'Không tìm thấy BIN hoặc API không khả dụng',
-    binLabel: 'BIN'
+    binLabel: 'BIN',
+    clear: 'Xoá',
+    filledOk: 'Đã điền',
+    notFound: 'Không tìm thấy'
   }
 };
 
@@ -468,6 +476,8 @@ async function generateFakeData(countryCode) {
   let state = loc.state || '';
   let zip = loc.zip || '';
   let phone = c.phone ? c.phone() : '';
+  let dobIso = null;
+  let age = rand(22, 55);
 
   const supportedNats = ['AU','BR','CA','CH','DE','DK','ES','FI','FR','GB','IE','IN','IR','MX','NL','NO','NZ','RS','TR','UA','US'];
 
@@ -487,6 +497,8 @@ async function generateFakeData(countryCode) {
           state = user.location.state;
           zip = String(user.location.postcode);
           phone = user.phone;
+          age = user.dob && user.dob.age ? user.dob.age : age;
+          dobIso = user.dob && user.dob.date ? user.dob.date.slice(0, 10) : null;
         }
       }
     } catch (e) {
@@ -494,16 +506,36 @@ async function generateFakeData(countryCode) {
     }
   }
 
+  // Generate a plausible DOB locally if the API didn't provide one.
+  if (!dobIso) {
+    const today = new Date();
+    const y = today.getFullYear() - age;
+    const m = rand(1, 12);
+    const d = rand(1, 28);
+    dobIso = `${y}-${String(m).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
+  }
+
+  const companies = [
+    'Acme Corp', 'Initech', 'Globex', 'Hooli', 'Stark Industries',
+    'Wayne Enterprises', 'Wonka Industries', 'Pied Piper', 'Massive Dynamic',
+    'Soylent Corp', 'Umbrella Inc', 'Cyberdyne', 'Tyrell Corp'
+  ];
+
   return {
     name: `${firstName} ${lastName}`,
+    firstName,
+    lastName,
     email: `${firstName.toLowerCase()}.${lastName.toLowerCase()}${rand(1,99)}@${pick(EMAIL_DOMAINS)}`,
     phone: phone,
     address: `${streetNum} ${street}`,
     address2: rand(0, 1) ? `Apt ${rand(1, 999)}` : '',
     city: city,
     state: state,
+    stateCode: (state || '').slice(0, 2).toUpperCase(),
     zip: zip,
-    age: rand(18, 45),
+    age: age,
+    dob: dobIso,
+    company: pick(companies),
     countryCode: countryCode,
     countryName: c.name
   };
@@ -765,26 +797,58 @@ async function doGenFill() {
       });
     } catch (_) {}
 
-    let response = null;
+    // Aggregate results across the main frame + every subframe by calling
+    // the helper that content.js exposed (window.__cardfillFill).
+    const aggregated = [];
     try {
-      response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_FORM', data: fillData });
-    } catch (msgErr) {
-      setStatus('⚠️ ' + t('statusInjectFail'), 'error');
-      return;
+      const perFrame = await chrome.scripting.executeScript({
+        target: { tabId: tab.id, allFrames: true },
+        func: (data) => {
+          try {
+            return typeof window.__cardfillFill === 'function'
+              ? window.__cardfillFill(data)
+              : null;
+          } catch (e) {
+            return { ok: false, error: e && e.message };
+          }
+        },
+        args: [fillData]
+      });
+      for (const fr of perFrame) {
+        const r = fr && fr.result;
+        if (r && Array.isArray(r.results)) aggregated.push(...r.results);
+      }
+    } catch (_) {
+      // Fallback: try a normal sendMessage to the top frame.
+      try {
+        const r = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_FORM', data: fillData });
+        if (r && r.results) aggregated.push(...r.results);
+      } catch (_) {
+        setStatus('⚠️ ' + t('statusInjectFail'), 'error');
+        return;
+      }
     }
 
-    appendResult(renderCard(card));
-
-    const results = response?.results || [];
+    // Dedupe per field: prefer ok > hosted > skip > fail > error.
+    const rank = { ok: 5, hosted: 4, skip: 2, fail: 1, error: 0 };
+    const byField = new Map();
+    for (const r of aggregated) {
+      const prev = byField.get(r.field);
+      if (!prev || rank[r.status] > rank[prev.status]) byField.set(r.field, r);
+    }
+    const results = Array.from(byField.values());
     const filled  = results.filter(r => r.status === 'ok').map(r => r.field);
+    const hosted  = results.filter(r => r.status === 'hosted').map(r => r.field);
     const skipped = results.filter(r => r.status === 'skip').map(r => r.field);
+
+    appendResult(renderCard(card));
 
     const summary = document.createElement('div');
     summary.className = 'bin-info';
 
     const title = document.createElement('div');
     title.className = 'bin-info-title';
-    title.textContent = '📋 Fill Data';
+    title.textContent = '📋 ' + t('country') + ': ' + fillData.countryName;
     summary.appendChild(title);
 
     const grid = document.createElement('div');
@@ -796,9 +860,10 @@ async function doGenFill() {
       ['Address', fillData.address + (fillData.address2 ? ', ' + fillData.address2 : '')],
       ['City', fillData.city],
       ['ZIP', fillData.zip],
-      [t('country'), `${fillData.countryCode} — ${fillData.countryName}`]
+      ['DOB', fillData.dob]
     ];
     rows.forEach(([k, v]) => {
+      if (!v) return;
       const r = document.createElement('div');
       r.className = 'bin-info-row';
       r.innerHTML = `${escapeHtml(k)}: <span>${escapeHtml(v)}</span>`;
@@ -809,24 +874,33 @@ async function doGenFill() {
     if (filled.length > 0) {
       const ok = document.createElement('div');
       ok.className = 'bin-info-foot ok';
-      ok.textContent = '✅ Filled: ' + filled.join(', ');
+      ok.textContent = '✅ ' + t('filledOk') + ': ' + filled.join(', ');
       summary.appendChild(ok);
+    }
+    if (hosted.length > 0) {
+      const hf = document.createElement('div');
+      hf.className = 'bin-info-foot warn';
+      hf.textContent = '🔒 ' + t('statusHostedCard');
+      summary.appendChild(hf);
     }
     if (skipped.length > 0) {
       const sk = document.createElement('div');
       sk.className = 'bin-info-foot warn';
-      sk.textContent = '⏭ Not found: ' + skipped.join(', ');
+      sk.textContent = '⏭ ' + t('notFound') + ': ' + skipped.join(', ');
       summary.appendChild(sk);
     }
 
     appendResult(summary);
 
-    const totalFilled = filled.length;
-    if (totalFilled === 0) {
+    if (filled.length === 0 && hosted.length === 0) {
       setStatus('⚠️ ' + t('statusNothingFilled'), 'warning');
+    } else if (hosted.length > 0 && filled.length > 0) {
+      setStatus('✅ ' + t('statusFilled', { n: filled.length }) + ' · 🔒 ' + t('statusHostedCard'),
+                'warning');
+    } else if (hosted.length > 0) {
+      setStatus('🔒 ' + t('statusHostedCard'), 'warning');
     } else {
-      setStatus('✅ ' + t('statusFilled', { n: totalFilled }), 'success');
-      setTimeout(() => window.close(), 1200);
+      setStatus('✅ ' + t('statusFilled', { n: filled.length }), 'success');
     }
 
   } catch (e) {
@@ -888,7 +962,10 @@ document.addEventListener('DOMContentLoaded', () => {
   document.getElementById('validateBtn').addEventListener('click', doValidate);
   document.getElementById('binCheckBtn').addEventListener('click', doBinCheck);
   document.getElementById('genFillBtn').addEventListener('click', doGenFill);
-  document.getElementById('genOnlyBtn').addEventListener('click', doGenerate);
+  document.getElementById('clearBtn').addEventListener('click', () => {
+    clearResults();
+    setStatus('', 'info');
+  });
 
   // Enter key on BIN input triggers generate
   binInput.addEventListener('keydown', (e) => {
