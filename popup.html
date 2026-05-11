@@ -1,0 +1,113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>CardFill Pro</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="container">
+    <!-- Header -->
+    <div class="header">
+      <span class="logo">💳</span>
+      <span class="brand">CARDFILL PRO</span>
+      <div class="header-right">
+        <span class="badge" id="langBadge">GB</span>
+        <button class="icon-btn" id="themeBtn" title="Toggle theme">🌙</button>
+      </div>
+    </div>
+
+    <!-- BIN Input -->
+    <div class="field-group">
+      <label class="label"><span class="label-icon">🏦</span> Enter BIN</label>
+      <input type="text" id="binInput" class="input" placeholder="Enter BIN (6–9 digits)" maxlength="9" autocomplete="off">
+    </div>
+
+    <!-- Checkboxes -->
+    <div class="checkbox-row">
+      <label class="cb-label">
+        <input type="checkbox" id="dateAuto" checked>
+        <span class="cb-box"></span>
+        <span class="cb-icon">📅</span> Date
+      </label>
+      <label class="cb-label">
+        <input type="checkbox" id="cvvAuto" checked>
+        <span class="cb-box"></span>
+        <span class="cb-icon">🔒</span> CVV
+      </label>
+      <label class="cb-label">
+        <input type="checkbox" id="randomMode">
+        <span class="cb-box"></span>
+        <span class="cb-icon">🎲</span> Random
+      </label>
+    </div>
+
+    <!-- Manual Date/CVV Row -->
+    <div class="manual-row" id="manualRow">
+      <div class="mini-field">
+        <label class="mini-label"><span>📅</span> Month</label>
+        <input type="text" id="monthInput" class="input mini" placeholder="MM" maxlength="2">
+      </div>
+      <div class="mini-field">
+        <label class="mini-label"><span>📅</span> Year</label>
+        <input type="text" id="yearInput" class="input mini" placeholder="YY" maxlength="2">
+      </div>
+      <div class="mini-field">
+        <label class="mini-label"><span>🔥</span> CVV</label>
+        <input type="text" id="cvvInput" class="input mini" placeholder="123" maxlength="4">
+      </div>
+    </div>
+
+    <!-- Qty + Country Row -->
+    <div class="two-col">
+      <div class="field-group">
+        <label class="label"><span class="label-icon">🔢</span> Qty</label>
+        <input type="number" id="qtyInput" class="input" value="1" min="1" max="50">
+      </div>
+      <div class="field-group" style="flex:2">
+        <label class="label"><span class="label-icon">🌍</span> Select Country</label>
+        <select id="countrySelect" class="input select">
+          <option value="US">🇺🇸 United States</option>
+          <option value="ES" selected>🇪🇸 Spain</option>
+          <option value="GB">🇬🇧 United Kingdom</option>
+          <option value="FR">🇫🇷 France</option>
+          <option value="DE">🇩🇪 Germany</option>
+          <option value="IT">🇮🇹 Italy</option>
+          <option value="CA">🇨🇦 Canada</option>
+          <option value="AU">🇦🇺 Australia</option>
+          <option value="BR">🇧🇷 Brazil</option>
+          <option value="MX">🇲🇽 Mexico</option>
+          <option value="JP">🇯🇵 Japan</option>
+          <option value="NL">🇳🇱 Netherlands</option>
+          <option value="SG">🇸🇬 Singapore</option>
+          <option value="VN">🇻🇳 Vietnam</option>
+          <option value="TH">🇹🇭 Thailand</option>
+        </select>
+      </div>
+    </div>
+
+    <!-- Action Buttons Row 1 -->
+    <div class="btn-row">
+      <button class="btn btn-gen" id="generateBtn">⚡ Generate</button>
+      <button class="btn btn-validate" id="validateBtn">✅ Validate</button>
+      <button class="btn btn-bin" id="binCheckBtn">🔍 BIN Check</button>
+    </div>
+
+    <!-- Action Buttons Row 2 -->
+    <div class="btn-row">
+      <button class="btn btn-fill" id="genFillBtn">🔥 GEN &amp; FILL</button>
+      <button class="btn btn-genonly" id="genOnlyBtn">⚡ Gen Only</button>
+    </div>
+
+    <!-- Status -->
+    <div class="status-bar" id="statusBar"></div>
+
+    <!-- Results -->
+    <div class="results" id="results"></div>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>
