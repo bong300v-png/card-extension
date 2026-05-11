@@ -162,9 +162,21 @@
 
   // ----- Field lookup -----
 
-  // Find input/select/textarea associated with a label by its text content.
-  function findFieldByLabel(keywords) {
+  // Collect EVERY input/select/textarea associated with a label whose text
+  // matches any of the given keywords. Returns an array (possibly empty).
+  // Multi-instance is critical: real forms often have many fieldsets that
+  // reuse the same label text ("Card number" appears in autocomplete and
+  // named/split fieldsets; "Họ và tên" appears once per checkout step).
+  function findAllFieldsByLabel(keywords) {
     const lcKws = keywords.map(k => k.toLowerCase());
+    const out = [];
+    const seen = new Set();
+    const push = (el) => {
+      if (el && el.matches && el.matches('input, select, textarea') && !seen.has(el)) {
+        seen.add(el);
+        out.push(el);
+      }
+    };
 
     for (const root of walkAllRoots(document)) {
       const labels = root.querySelectorAll
@@ -184,58 +196,65 @@
 
         // 1) label[for]
         if (labelEl.htmlFor) {
-          const el = root.getElementById
+          const target = root.getElementById
             ? root.getElementById(labelEl.htmlFor)
             : document.getElementById(labelEl.htmlFor);
-          if (el && el.matches && el.matches('input, select, textarea')) return el;
+          if (target) push(target);
         }
         // 2) input inside the label
         const inner = labelEl.querySelector && labelEl.querySelector('input, select, textarea');
-        if (inner) return inner;
-        // 3) next siblings, up to 4 hops
+        if (inner) push(inner);
+        // 3) next siblings, up to 4 hops (input lives after the label)
         let sib = labelEl.nextElementSibling;
         for (let i = 0; i < 4 && sib; i++) {
-          if (sib.matches && sib.matches('input, select, textarea')) return sib;
+          if (sib.matches && sib.matches('input, select, textarea')) push(sib);
           const found = sib.querySelector && sib.querySelector('input, select, textarea');
-          if (found) return found;
+          if (found) push(found);
           sib = sib.nextElementSibling;
         }
-        // 4) parent's next siblings (handles two-column layouts)
+        // 4) parent's next siblings (two-column layouts where label and input
+        //    sit in adjacent grid cells)
         const parent = labelEl.parentElement;
         if (parent) {
           let psib = parent.nextElementSibling;
           for (let i = 0; i < 3 && psib; i++) {
             const found = psib.querySelector && psib.querySelector('input, select, textarea');
-            if (found) return found;
+            if (found) push(found);
             psib = psib.nextElementSibling;
           }
         }
-        // 5) aria-controls / aria-labelledby reverse lookup
+        // 5) aria-labelledby reverse lookup
         const labelId = labelEl.id;
         if (labelId) {
-          const ref = document.querySelector(`[aria-labelledby~="${labelId}"], [aria-describedby~="${labelId}"]`);
-          if (ref && ref.matches && ref.matches('input, select, textarea')) return ref;
+          const refs = document.querySelectorAll(`[aria-labelledby~="${labelId}"], [aria-describedby~="${labelId}"]`);
+          for (const ref of refs) push(ref);
         }
       }
     }
-    return null;
+    return out;
+  }
+
+  // Backwards-compatible single-result helper (first match only).
+  function findFieldByLabel(keywords) {
+    const all = findAllFieldsByLabel(keywords);
+    return all.length ? all[0] : null;
+  }
+
+  // Return EVERY input/select/textarea matching the CSS selectors or any
+  // label keyword. Deduplicated. Visible elements come first.
+  function findAllFields(selectors, labelKeywords = []) {
+    const all = queryAll(selectors);
+    const visible = all.filter(isVisible);
+    const hidden = all.filter(el => !isVisible(el));
+    const byLabel = (labelKeywords && labelKeywords.length)
+      ? findAllFieldsByLabel(labelKeywords).filter(el => !all.includes(el))
+      : [];
+    return [...visible, ...hidden, ...byLabel];
   }
 
   function findField(selectors, labelKeywords = []) {
-    // Pass 1: CSS selectors, visible only
-    const visible = queryAll(selectors).filter(isVisible);
-    if (visible.length) return visible[0];
-
-    // Pass 2: CSS selectors, any state (handles steps / tabs)
-    const any = queryAll(selectors);
-    if (any.length) return any[0];
-
-    // Pass 3: label text detection
-    if (labelKeywords && labelKeywords.length) {
-      const el = findFieldByLabel(labelKeywords);
-      if (el) return el;
-    }
-    return null;
+    const all = findAllFields(selectors, labelKeywords);
+    return all.length ? all[0] : null;
   }
 
   // ----- Stripe Element detection -----
@@ -265,16 +284,29 @@
   function fillForm(data) {
     const results = [];
 
+    // Fill EVERY matching element. Real checkout forms duplicate the same
+    // field across fieldsets (billing vs shipping, autocomplete vs named,
+    // EN labels vs VI labels). Filling only the first match leaves user
+    // visible blanks elsewhere, which is exactly the bug the user reported.
     const tryFill = (fieldName, selectors, fillFn, labelKws = []) => {
       try {
-        const el = findField(selectors, labelKws);
-        if (!el) {
+        const els = findAllFields(selectors, labelKws);
+        if (els.length === 0) {
           results.push({ field: fieldName, status: 'skip' });
           return null;
         }
-        const ok = fillFn(el);
-        results.push({ field: fieldName, status: ok ? 'ok' : 'fail' });
-        return el;
+        let filled = 0;
+        for (const el of els) {
+          try {
+            if (fillFn(el)) filled++;
+          } catch (_) {}
+        }
+        results.push({
+          field: fieldName,
+          status: filled > 0 ? 'ok' : 'fail',
+          count: filled
+        });
+        return els[0];
       } catch (e) {
         results.push({ field: fieldName, status: 'error', msg: e && e.message });
         return null;
@@ -300,7 +332,9 @@
        ['card number', 'card no', 'card details', 'số thẻ', 'numero de tarjeta', 'numéro de carte', 'kartennummer']);
 
     // ----- EXPIRY (combined OR split) -----
-    const expEl = findField([
+    // Fill EVERY expiry input we find — there may be one combined `MM/YY`
+    // input in one fieldset AND split month/year selects in another fieldset.
+    const expEls = findAllFields([
       '[autocomplete="cc-exp"]',
       'input[name*="expiry" i]', 'input[name*="expdate" i]', 'input[name*="exp_date" i]',
       'input[name*="card_exp" i]', 'input[name*="cc-exp" i]', 'input[name*="cardexpiry" i]',
@@ -310,61 +344,73 @@
       'input[data-elements-stable-field-name="cardExpiry"]',
       'input[aria-label*="expiry" i]', 'input[aria-label*="expiration" i]',
       'input[aria-label*="hết hạn" i]', 'input[aria-label*="hsd" i]'
-    ], ['expiry', 'expiration', 'exp date', 'mm/yy', 'mm / yy', 'hsd', 'hết hạn', 'hết hạn thẻ']);
-    if (expEl) {
-      // Detect if the field expects YY vs YYYY based on placeholder/maxlength
-      const placeholder = (expEl.placeholder || '').toUpperCase();
-      const maxLen = parseInt(expEl.getAttribute('maxlength') || '0', 10);
+    ], ['expiry', 'expiration', 'exp date', 'mm/yy', 'mm / yy', 'hsd', 'hết hạn', 'hết hạn thẻ'])
+      // Exclude split month/year fields we'll fill separately below.
+      .filter(el => {
+        const n = ((el.getAttribute('name') || '') + (el.getAttribute('id') || '')).toLowerCase();
+        return !n.includes('month') && !n.includes('year');
+      });
+
+    let expiryFilled = 0;
+    for (const el of expEls) {
+      const placeholder = (el.placeholder || '').toUpperCase();
+      const maxLen = parseInt(el.getAttribute('maxlength') || '0', 10);
       const useFullYear = placeholder.includes('YYYY') || maxLen >= 7;
       const yy = useFullYear ? `20${data.year}` : data.year;
-      try {
-        setVal(expEl, `${data.month}/${yy}`);
-        results.push({ field: 'Expiry', status: 'ok' });
-      } catch (e) {
-        results.push({ field: 'Expiry', status: 'error', msg: e && e.message });
-      }
-    } else {
-      // Split month / year fields
-      const monthEl = findField([
-        '[autocomplete="cc-exp-month"]',
-        'input[name*="exp_month" i]', 'input[name*="expiry_month" i]',
-        'input[name*="exp-month" i]', 'input[name*="card_exp_month" i]',
-        'select[name*="month" i]', 'select[id*="month" i]',
-        'input[id*="expMonth"]', 'input[id*="exp-month" i]',
-        'input[placeholder="MM"]', 'input[placeholder*="MM" i][maxlength="2"]'
-      ], ['expiration month', 'expiry month', 'month', 'tháng']);
-      const yearEl = findField([
-        '[autocomplete="cc-exp-year"]',
-        'input[name*="exp_year" i]', 'input[name*="expiry_year" i]',
-        'input[name*="exp-year" i]', 'input[name*="card_exp_year" i]',
-        'select[name*="year" i]', 'select[id*="year" i]',
-        'input[id*="expYear"]', 'input[id*="exp-year" i]',
-        'input[placeholder="YY"]', 'input[placeholder="YYYY"]'
-      ], ['expiration year', 'expiry year', 'year', 'năm']);
-      let any = false;
-      if (monthEl) {
-        const monthValues = [
-          data.month,
-          String(parseInt(data.month, 10)), // strip leading zero
-          new Date(2000, parseInt(data.month, 10) - 1).toLocaleString('en', { month: 'long' }),
-          new Date(2000, parseInt(data.month, 10) - 1).toLocaleString('en', { month: 'short' })
-        ];
-        if (monthEl.tagName === 'SELECT' ? setSelectVal(monthEl, monthValues) : setVal(monthEl, data.month)) {
-          any = true;
-        }
-      }
-      if (yearEl) {
-        const yearValues = [
-          `20${data.year}`,
-          data.year,
-          parseInt(data.year, 10).toString()
-        ];
-        if (yearEl.tagName === 'SELECT' ? setSelectVal(yearEl, yearValues) : setVal(yearEl, yearValues[0])) {
-          any = true;
-        }
-      }
-      results.push({ field: 'Expiry', status: any ? 'ok' : 'skip' });
+      if (setVal(el, `${data.month}/${yy}`)) expiryFilled++;
     }
+
+    // Split month / year fields (may coexist with combined inputs above).
+    const monthEls = findAllFields([
+      '[autocomplete="cc-exp-month"]',
+      'input[name*="exp_month" i]', 'input[name*="expiry_month" i]',
+      'input[name*="exp-month" i]', 'input[name*="card_exp_month" i]',
+      'select[name*="exp_month" i]', 'select[name*="expiry_month" i]',
+      'select[name*="exp-month" i]', 'select[name*="card_exp_month" i]',
+      'select[name*="month" i]', 'select[id*="month" i]',
+      'input[id*="expMonth"]', 'input[id*="exp-month" i]',
+      'input[placeholder="MM"]', 'input[placeholder*="MM" i][maxlength="2"]'
+    ], ['expiration month', 'expiry month', 'exp month', 'month', 'tháng']);
+    const yearEls = findAllFields([
+      '[autocomplete="cc-exp-year"]',
+      'input[name*="exp_year" i]', 'input[name*="expiry_year" i]',
+      'input[name*="exp-year" i]', 'input[name*="card_exp_year" i]',
+      'select[name*="exp_year" i]', 'select[name*="expiry_year" i]',
+      'select[name*="exp-year" i]', 'select[name*="card_exp_year" i]',
+      'select[name*="year" i]', 'select[id*="year" i]',
+      'input[id*="expYear"]', 'input[id*="exp-year" i]',
+      'input[placeholder="YY"]', 'input[placeholder="YYYY"]'
+    ], ['expiration year', 'expiry year', 'exp year', 'year', 'năm']);
+
+    const monthValues = [
+      data.month,
+      String(parseInt(data.month, 10)), // strip leading zero
+      new Date(2000, parseInt(data.month, 10) - 1).toLocaleString('en', { month: 'long' }),
+      new Date(2000, parseInt(data.month, 10) - 1).toLocaleString('en', { month: 'short' })
+    ];
+    const yearValues = [
+      `20${data.year}`,
+      data.year,
+      parseInt(data.year, 10).toString()
+    ];
+
+    for (const monthEl of monthEls) {
+      const ok = monthEl.tagName === 'SELECT'
+        ? setSelectVal(monthEl, monthValues)
+        : setVal(monthEl, data.month);
+      if (ok) expiryFilled++;
+    }
+    for (const yearEl of yearEls) {
+      const ok = yearEl.tagName === 'SELECT'
+        ? setSelectVal(yearEl, yearValues)
+        : setVal(yearEl, yearValues[0]);
+      if (ok) expiryFilled++;
+    }
+    results.push({
+      field: 'Expiry',
+      status: expiryFilled > 0 ? 'ok' : 'skip',
+      count: expiryFilled
+    });
 
     // ----- CVV -----
     tryFill('CVV', [
@@ -381,8 +427,16 @@
     ], el => setVal(el, data.cvv),
        ['cvv', 'cvc', 'security code', 'card verification', 'mã bảo mật']);
 
-    // ----- NAME ON CARD (preferred, then generic name) -----
-    const cardNameEl = findField([
+    // ----- NAMES: card-name, full name, first/last, middle -----
+    // Real forms often combine ALL of these (e.g. a "Name on card" field
+    // AND a separate "Full Name" billing field AND split first/last for
+    // shipping). Fill every variant we find. Use mutual exclusion across
+    // groups so the same input is never claimed by two different "name"
+    // handlers — full-name beats first/last for the same element.
+    const [firstName, ...lastParts] = (data.name || '').split(' ');
+    const lastName = lastParts.join(' ') || firstName;
+
+    const cardNameEls = findAllFields([
       '[autocomplete="cc-name"]',
       'input[name*="cc-name" i]', 'input[name*="card_name" i]', 'input[name*="card-name" i]',
       'input[name*="cardname" i]', 'input[name*="cardholder" i]',
@@ -393,58 +447,73 @@
       'input[placeholder*="Name on card" i]', 'input[placeholder*="Cardholder" i]',
       'input[placeholder*="Card holder" i]', 'input[placeholder*="Tên trên thẻ" i]'
     ], ['name on card', 'cardholder', 'cardholder name', 'card holder', 'tên chủ thẻ', 'tên trên thẻ']);
-    if (cardNameEl) {
-      setVal(cardNameEl, data.name);
-      results.push({ field: 'Name on Card', status: 'ok' });
-    }
+    let cardNameFilled = 0;
+    for (const el of cardNameEls) if (setVal(el, data.name)) cardNameFilled++;
+    results.push({
+      field: 'Name on Card',
+      status: cardNameFilled > 0 ? 'ok' : 'skip',
+      count: cardNameFilled
+    });
 
-    // ----- FULL NAME / FIRST + LAST -----
-    const [firstName, ...lastParts] = (data.name || '').split(' ');
-    const lastName = lastParts.join(' ') || firstName;
-
-    const fullNameEl = findField([
+    const fullNameEls = findAllFields([
       '[autocomplete="name"]',
       'input[name="full_name" i]', 'input[name="fullname" i]', 'input[name="full-name" i]',
       'input[name="name" i]',
       'input[id="full_name" i]', 'input[id="fullname" i]', 'input[id="name" i]',
       'input[placeholder="Full name" i]', 'input[placeholder*="Your name" i]',
       'input[placeholder*="Họ và tên" i]', 'input[placeholder*="Tên đầy đủ" i]'
-    ], ['full name', 'your name', 'name', 'họ và tên', 'họ tên', 'tên đầy đủ', 'nombre completo', 'nom complet']);
-    if (fullNameEl && fullNameEl !== cardNameEl) {
-      setVal(fullNameEl, data.name);
-      results.push({ field: 'Name', status: 'ok' });
-    } else if (!cardNameEl) {
-      const firstEl = findField([
-        '[autocomplete="given-name"]',
-        'input[name*="first_name" i]', 'input[name*="firstname" i]',
-        'input[name*="first-name" i]', 'input[name="fname" i]',
-        'input[id*="first_name" i]', 'input[id*="firstname" i]', 'input[id*="fname" i]',
-        'input[placeholder*="First name" i]', 'input[placeholder*="Given name" i]',
-        'input[placeholder*="Tên" i]'
-      ], ['first name', 'given name', 'tên', 'prénom', 'nombre', 'vorname']);
-      const lastEl = findField([
-        '[autocomplete="family-name"]',
-        'input[name*="last_name" i]', 'input[name*="lastname" i]',
-        'input[name*="last-name" i]', 'input[name="lname" i]',
-        'input[name*="surname" i]', 'input[name*="family_name" i]',
-        'input[id*="last_name" i]', 'input[id*="lastname" i]', 'input[id*="surname" i]',
-        'input[placeholder*="Last name" i]', 'input[placeholder*="Surname" i]',
-        'input[placeholder*="Family name" i]', 'input[placeholder*="Họ" i]'
-      ], ['last name', 'surname', 'family name', 'họ', 'nom', 'apellido', 'nachname']);
-      const middleEl = findField([
-        '[autocomplete="additional-name"]',
-        'input[name*="middle_name" i]', 'input[name*="middlename" i]',
-        'input[name*="middle-name" i]',
-        'input[id*="middle_name" i]', 'input[id*="middlename" i]',
-        'input[placeholder*="Middle name" i]', 'input[placeholder*="Middle" i]'
-      ], ['middle name', 'middle initial']);
+    ], ['full name', 'your name', 'họ và tên', 'họ tên', 'tên đầy đủ', 'nombre completo', 'nom complet'])
+      .filter(el => !cardNameEls.includes(el));
+    let fullNameFilled = 0;
+    for (const el of fullNameEls) if (setVal(el, data.name)) fullNameFilled++;
+    results.push({
+      field: 'Full Name',
+      status: fullNameFilled > 0 ? 'ok' : 'skip',
+      count: fullNameFilled
+    });
 
-      let nameAny = false;
-      if (firstEl) { setVal(firstEl, firstName); nameAny = true; }
-      if (lastEl)  { setVal(lastEl, lastName);   nameAny = true; }
-      if (middleEl) setVal(middleEl, ''); // leave blank — we don't generate middle names
-      results.push({ field: 'Name (split)', status: nameAny ? 'ok' : 'skip' });
-    }
+    const firstEls = findAllFields([
+      '[autocomplete="given-name"]',
+      'input[name*="first_name" i]', 'input[name*="firstname" i]',
+      'input[name*="first-name" i]', 'input[name="fname" i]',
+      'input[id*="first_name" i]', 'input[id*="firstname" i]', 'input[id*="fname" i]',
+      'input[placeholder*="First name" i]', 'input[placeholder*="Given name" i]'
+    ], ['first name', 'given name', 'prénom', 'nombre', 'vorname'])
+      .filter(el => !cardNameEls.includes(el) && !fullNameEls.includes(el));
+    let firstFilled = 0;
+    for (const el of firstEls) if (setVal(el, firstName)) firstFilled++;
+    results.push({
+      field: 'First Name',
+      status: firstFilled > 0 ? 'ok' : 'skip',
+      count: firstFilled
+    });
+
+    const lastEls = findAllFields([
+      '[autocomplete="family-name"]',
+      'input[name*="last_name" i]', 'input[name*="lastname" i]',
+      'input[name*="last-name" i]', 'input[name="lname" i]',
+      'input[name*="surname" i]', 'input[name*="family_name" i]',
+      'input[id*="last_name" i]', 'input[id*="lastname" i]', 'input[id*="surname" i]',
+      'input[placeholder*="Last name" i]', 'input[placeholder*="Surname" i]',
+      'input[placeholder*="Family name" i]'
+    ], ['last name', 'surname', 'family name', 'nom', 'apellido', 'nachname'])
+      .filter(el => !cardNameEls.includes(el) && !fullNameEls.includes(el) && !firstEls.includes(el));
+    let lastFilled = 0;
+    for (const el of lastEls) if (setVal(el, lastName)) lastFilled++;
+    results.push({
+      field: 'Last Name',
+      status: lastFilled > 0 ? 'ok' : 'skip',
+      count: lastFilled
+    });
+
+    const middleEls = findAllFields([
+      '[autocomplete="additional-name"]',
+      'input[name*="middle_name" i]', 'input[name*="middlename" i]',
+      'input[name*="middle-name" i]',
+      'input[id*="middle_name" i]', 'input[id*="middlename" i]',
+      'input[placeholder*="Middle name" i]'
+    ], ['middle name', 'middle initial']);
+    for (const el of middleEls) setVal(el, ''); // We don't generate middle names
 
     // ----- EMAIL -----
     tryFill('Email', [
@@ -589,9 +658,19 @@
          ['date of birth', 'dob', 'birthday', 'ngày sinh']);
     }
 
-    // ----- TERMS / CONSENT CHECKBOXES -----
+    // ----- TERMS / CONSENT / SUBSCRIBE CHECKBOXES -----
+    // Auto-tick checkboxes whose label text suggests consent, terms-of-service,
+    // age confirmation, marketing opt-in, etc. We deliberately DO NOT dispatch
+    // a synthetic `click` event afterwards — React-controlled checkboxes treat
+    // `click` as a user toggle which would flip the box back to false.
+    let consentFilled = 0;
     try {
       const seen = new Set();
+      const consentKeywords = [
+        'agree', 'terms', 'accept', 'consent', 'privacy', 'tos',
+        'i confirm', 'condition', 'điều khoản', 'đồng ý', 'tôi đồng ý',
+        'chấp nhận', 'cam kết', 'xác nhận'
+      ];
       for (const root of walkAllRoots(document)) {
         if (!root.querySelectorAll) continue;
         const boxes = root.querySelectorAll('input[type="checkbox"]');
@@ -600,26 +679,41 @@
           seen.add(cb);
           if (cb.checked || cb.disabled) continue;
 
-          const label = (
-            (cb.id && root.querySelector(`label[for="${cb.id}"]`)) ||
-            cb.closest('label') ||
-            cb.parentElement
-          );
-          const text = (label?.textContent || cb.getAttribute('aria-label') || '').toLowerCase();
-          if (
-            text.includes('agree') || text.includes('terms') ||
-            text.includes('accept') || text.includes('consent') ||
-            text.includes('privacy') || text.includes('điều khoản') ||
-            text.includes('đồng ý')
-          ) {
+          const labelByFor = cb.id
+            ? (root.querySelector
+                ? root.querySelector(`label[for="${cb.id}"]`)
+                : document.querySelector(`label[for="${cb.id}"]`))
+            : null;
+          const label = labelByFor || cb.closest('label') || cb.parentElement;
+          const text = (
+            (label && label.textContent) ||
+            cb.getAttribute('aria-label') ||
+            cb.getAttribute('title') ||
+            ''
+          ).toLowerCase();
+
+          const matched = consentKeywords.some(kw => text.includes(kw));
+          if (!matched) continue;
+
+          try {
+            const setter = Object.getOwnPropertyDescriptor(
+              window.HTMLInputElement.prototype, 'checked'
+            ).set;
+            setter.call(cb, true);
+          } catch (_) {
             cb.checked = true;
-            fire(cb, 'click');
-            fire(cb, 'input');
-            fire(cb, 'change');
           }
+          fire(cb, 'input');
+          fire(cb, 'change');
+          consentFilled++;
         }
       }
     } catch (_) {}
+    results.push({
+      field: 'Consent Checkbox',
+      status: consentFilled > 0 ? 'ok' : 'skip',
+      count: consentFilled
+    });
 
     // Surface hosted-card-frame detection so the popup can warn the user.
     const hostedCard = detectHostedCardFrame();
