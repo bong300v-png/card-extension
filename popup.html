@@ -5,13 +5,9 @@
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>CardFill Pro</title>
   <link rel="stylesheet" href="popup.css">
-  <script>
-    // Apply saved theme before paint to avoid FOUC (Flash Of Unstyled Content)
-    try {
-      var t = localStorage.getItem('cf_theme');
-      if (t === 'dark') document.documentElement.classList.add('dark-mode');
-    } catch (_) {}
-  </script>
+  <!-- theme-init.js applies the saved theme before paint to avoid FOUC.
+       Must be an external file because MV3's extension CSP forbids inline scripts. -->
+  <script src="theme-init.js"></script>
 </head>
 <body>
   <div class="container">
