@@ -17,17 +17,29 @@ function setVal(el, value) {
   }
 }
 
+let latestFillData = null;
+
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
 function setSelectVal(el, tryValues) {
   if (!el) return false;
   const tries = Array.isArray(tryValues) ? tryValues : [tryValues];
   for (let tryVal of tries) {
-    const lc = tryVal.toLowerCase();
+    if (tryVal === undefined || tryVal === null || tryVal === '') continue;
+    const lc = String(tryVal).toLowerCase().trim();
     for (let opt of el.options) {
+      const optValue = String(opt.value || '').toLowerCase().trim();
+      const optText = String(opt.text || '').toLowerCase().trim();
+      if (!optValue && !optText) continue;
       if (
-        opt.value.toLowerCase() === lc ||
-        opt.value.toLowerCase().includes(lc) ||
-        opt.text.toLowerCase() === lc ||
-        opt.text.toLowerCase().includes(lc)
+        optValue === lc ||
+        optValue.includes(lc) ||
+        optText === lc ||
+        optText.includes(lc) ||
+        (optValue && lc.includes(optValue)) ||
+        (optText && lc.includes(optText))
       ) {
         el.value = opt.value;
         el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -45,6 +57,7 @@ function isVisible(el) {
   const style = window.getComputedStyle(el);
   if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
   const rect = el.getBoundingClientRect();
+  if (rect.right < 0 || rect.bottom < 0) return false;
   // Allow elements slightly off-screen (lazy-rendered sections)
   return rect.width > 0 || rect.height > 0 || el.tagName === 'SELECT';
 }
@@ -191,6 +204,10 @@ function fillForm(data) {
   const lastName = lastParts.join(' ');
   const fullNameEl = findField([
     '[autocomplete="cc-name"]', '[autocomplete="name"]',
+    '[name="name"]', '[id="name"]',
+    '[name*="billingName"]', '[id*="billingName"]',
+    '[name*="customer_name"]', '[id*="customer_name"]',
+    '[data-testid*="name"] input', '[data-test*="name"] input',
     '[name*="full_name"]', '[name*="fullname"]', '[name*="full-name"]',
     '[name*="cardholder"]', '[name*="card_name"]', '[name*="card-name"]',
     '[name*="name_on_card"]', '[id*="cardName"]', '[id*="cardholder"]',
@@ -227,6 +244,9 @@ function fillForm(data) {
   // Email
   tryFill('Email', [
     '[autocomplete="email"]', '[type="email"]',
+    '[name="email"]', '[id="email"]',
+    '[name*="customer_email"]', '[id*="customer_email"]',
+    '[data-testid*="email"] input', '[data-test*="email"] input',
     '[name*="email"]', '[id*="email"]',
     'input[placeholder*="email"]', 'input[placeholder*="Email"]'
   ], el => setVal(el, data.email));
@@ -234,13 +254,48 @@ function fillForm(data) {
   // Phone
   tryFill('Phone', [
     '[autocomplete="tel"]', '[type="tel"]',
+    '[name="phone"]', '[id="phone"]',
+    '[name*="customer_phone"]', '[id*="customer_phone"]',
+    '[data-testid*="phone"] input', '[data-test*="phone"] input',
     '[name*="phone"]', '[name*="telephone"]', '[name*="mobile"]',
     '[id*="phone"]', 'input[placeholder*="phone"]', 'input[placeholder*="Phone"]'
-  ], el => setVal(el, data.phone));
+  ], el => setVal(el, data.phone ? String(data.phone).replace(/^\+\d+\s*/, '') : '9637711285'));
+
+  tryFill('Business', [
+    '[autocomplete="organization"]',
+    '[name="Business name"]', '[id="businessName"]',
+    '[name*="business"]', '[id*="business"]',
+    '[name*="company"]', '[id*="company"]',
+    '[name*="organization"]', '[id*="organization"]',
+    '[data-testid*="business"] input', '[data-test*="business"] input',
+    'input[placeholder*="Business"]', 'input[placeholder*="Company"]'
+  ], el => setVal(el, `${lastName || firstName} Services`));
+
+  tryFill('Phone Country', [
+    '[autocomplete="never-autocomplete-country-code"]',
+    'select[aria-label*="Phone number country code"]'
+  ], el => {
+    if (el.tagName === 'SELECT') return setSelectVal(el, [data.countryCode, data.countryName]);
+    return false;
+  });
+
+  tryFill('Country', [
+    '[autocomplete="country"]', '[autocomplete="country-name"]', '[autocomplete="billing country"]',
+    'select[name*="country"]', 'select[id*="country"]',
+    '[name="country"]', '[name="billingCountry"]', '[id="billingCountry"]', '[name="billing_country"]', '[name="billing[country]"]',
+    '[name="order[country]"]', '[name="address[country]"]',
+    '[id="country"]', '[id="billing-country"]', '[id="shipping-country"]',
+    '[data-field="country"]', '[data-testid*="country"]',
+    'select[class*="country"]'
+  ], el => {
+    if (el.tagName === 'SELECT') return setSelectVal(el, [data.countryCode, data.countryName]);
+    return setVal(el, data.countryName);
+  });
 
   // Address line 1
   tryFill('Address', [
-    '[autocomplete="street-address"]', '[autocomplete="address-line1"]',
+    '[autocomplete="street-address"]', '[autocomplete="address-line1"]', '[autocomplete="billing address-line1"]',
+    '[name="billingAddressLine1"]', '[id="billingAddressLine1"]',
     '[name*="address1"]', '[name*="address_1"]', '[name*="address-1"]',
     '[name="address"]', '[id*="address1"]', '[id*="address_line1"]',
     '[id*="address-line-1"]', '[name*="street"]', '[id*="street"]',
@@ -251,7 +306,8 @@ function fillForm(data) {
   // Address line 2
   try {
     const addr2El = findField([
-      '[autocomplete="address-line2"]',
+      '[autocomplete="address-line2"]', '[autocomplete="billing address-line2"]',
+      '[name="billingAddressLine2"]', '[id="billingAddressLine2"]',
       '[name*="address2"]', '[name*="address_2"]', '[name*="apt"]',
       '[id*="address2"]', 'input[placeholder*="Apt"]', 'input[placeholder*="Suite"]',
       'input[placeholder*="Address line 2"]'
@@ -261,7 +317,8 @@ function fillForm(data) {
 
   // City
   tryFill('City', [
-    '[autocomplete="address-level2"]',
+    '[autocomplete="address-level2"]', '[autocomplete="billing address-level2"]',
+    '[name="billingLocality"]', '[id="billingLocality"]',
     '[name*="city"]', '[name*="billing_city"]', '[name*="shipping_city"]',
     '[name*="town"]', '[name*="suburb"]',
     '[id*="city"]', '[id*="billing-city"]', '[id*="shipping-city"]',
@@ -271,17 +328,31 @@ function fillForm(data) {
 
   // State / Province
   tryFill('State', [
-    '[autocomplete="address-level1"]',
+    '[autocomplete="address-level1"]', '[autocomplete="billing address-level1"]',
+    '[name="billingAdministrativeArea"]', '[id="billingAdministrativeArea"]',
     '[name*="state"]', '[name*="province"]', '[id*="state"]',
     'select[name*="state"]', 'input[placeholder*="State"]', 'input[placeholder*="Province"]'
   ], el => {
-    if (el.tagName === 'SELECT') return setSelectVal(el, [data.state]) || setVal(el, data.state);
+    if (el.tagName === 'SELECT') {
+      const ok = setSelectVal(el, [data.state, data.city, data.countryName, data.countryCode]);
+      if (!ok) {
+        const fallback = Array.from(el.options).find(opt => opt.value && !opt.disabled);
+        if (fallback) {
+          el.value = fallback.value;
+          el.dispatchEvent(new Event('change', { bubbles: true }));
+          el.dispatchEvent(new Event('input', { bubbles: true }));
+          return true;
+        }
+      }
+      return ok;
+    }
     return setVal(el, data.state);
   });
 
   // ZIP / Postal
   tryFill('ZIP', [
-    '[autocomplete="postal-code"]',
+    '[autocomplete="postal-code"]', '[autocomplete="billing postal-code"]',
+    '[name="billingPostalCode"]', '[id="billingPostalCode"]',
     '[name*="zip"]', '[name*="postal"]', '[name*="postcode"]', '[name*="post_code"]',
     '[name*="billing_postcode"]', '[name*="billing_zip"]', '[name*="shipping_zip"]',
     '[id*="zip"]', '[id*="postal"]', '[id*="postcode"]', '[id*="post-code"]',
@@ -306,9 +377,9 @@ function fillForm(data) {
   });
 
   tryFill('Country', [
-    '[autocomplete="country"]', '[autocomplete="country-name"]',
+    '[autocomplete="country"]', '[autocomplete="country-name"]', '[autocomplete="billing country"]',
     'select[name*="country"]', 'select[id*="country"]',
-    '[name="country"]', '[name="billing_country"]', '[name="billing[country]"]',
+    '[name="country"]', '[name="billingCountry"]', '[id="billingCountry"]', '[name="billing_country"]', '[name="billing[country]"]',
     '[name="order[country]"]', '[name="address[country]"]',
     '[id="country"]', '[id="billing-country"]', '[id="shipping-country"]',
     '[data-field="country"]', '[data-testid*="country"]',
@@ -350,6 +421,7 @@ function fillForm(data) {
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'FILL_FORM') {
     try {
+      latestFillData = message.data;
       const results = fillForm(message.data);
       sendResponse({ success: true, results });
     } catch (e) {

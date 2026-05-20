@@ -245,7 +245,7 @@ function formatCard(number, type) {
 // ========== CARD GENERATION ==========
 function generateCard(bin, opts = {}) {
   const info = getCardType(bin);
-  let number = bin;
+  let number = String(bin || '').replace(/\D/g, '').slice(0, info.len - 1);
   while (number.length < info.len - 1) number += rand(0, 9);
   for (let d = 0; d <= 9; d++) {
     if (luhnCheck(number + d)) { number = number + d; break; }
@@ -399,6 +399,27 @@ function getOptions() {
   };
 }
 
+async function lookupBinInfo(bin) {
+  const lookupBin = String(bin || '').replace(/\D/g, '').slice(0, 8);
+  if (lookupBin.length < 6) return null;
+
+  try {
+    const res = await fetch(`https://lookup.binlist.net/${lookupBin}`, {
+      headers: { 'Accept-Version': '3' }
+    });
+    if (!res.ok) return null;
+    return await res.json();
+  } catch (_) {
+    return null;
+  }
+}
+
+function getCountryFromBinInfo(binInfo, fallbackCountry) {
+  const binCountry = binInfo?.country?.alpha2;
+  if (binCountry && COUNTRY_DATA[binCountry]) return binCountry;
+  return fallbackCountry;
+}
+
 // ========== GENERATE ==========
 function doGenerate() {
   const opts = getOptions();
@@ -458,11 +479,8 @@ async function doBinCheck() {
   setStatus('🔍 Looking up BIN...', 'loading');
 
   try {
-    const res = await fetch(`https://lookup.binlist.net/${bin}`, {
-      headers: { 'Accept-Version': '3' }
-    });
-    if (!res.ok) throw new Error('Not found');
-    const data = await res.json();
+    const data = await lookupBinInfo(bin);
+    if (!data) throw new Error('Not found');
 
     addResult(`
       <div class="bin-info">
@@ -486,13 +504,21 @@ async function doBinCheck() {
 // ========== GEN & FILL ==========
 async function doGenFill() {
   const opts = getOptions();
+
   if (opts.bin.length < 6) {
     opts.bin = randomBIN();
     document.getElementById('binInput').value = opts.bin;
   }
 
+  setStatus('🔍 Looking up BIN country...', 'loading');
+  const binInfo = await lookupBinInfo(opts.bin);
+  const fillCountry = getCountryFromBinInfo(binInfo, opts.country);
+  if (fillCountry !== opts.country) {
+    document.getElementById('countrySelect').value = fillCountry;
+  }
+
   const card = generateCard(opts.bin, opts);
-  const fakeData = await generateFakeData(opts.country);
+  const fakeData = await generateFakeData(fillCountry);
 
   const fillData = {
     cardNumber: card.number,
@@ -500,8 +526,13 @@ async function doGenFill() {
     year: card.year,
     cvv: card.cvv,
     ...fakeData,
-    countryCode: opts.country,          // ISO code from select (US/ES/GB...)
-    countryName: (COUNTRY_DATA[opts.country] || COUNTRY_DATA.US).name
+    countryCode: fillCountry,          // ISO code from select (US/ES/GB...)
+    countryName: (COUNTRY_DATA[fillCountry] || COUNTRY_DATA.US).name,
+    binCountryCode: binInfo?.country?.alpha2 || '',
+    binCountryName: binInfo?.country?.name || '',
+    binBankName: binInfo?.bank?.name || '',
+    binScheme: binInfo?.scheme || '',
+    binType: binInfo?.type || ''
   };
 
   setStatus('⚡ Filling form...', 'loading');
@@ -543,6 +574,7 @@ async function doGenFill() {
       `<div class="bin-info-row">City: <span>${fillData.city}</span></div>`,
       `<div class="bin-info-row">ZIP: <span>${fillData.zip}</span></div>`,
       `<div class="bin-info-row">Country: <span>${fillData.countryCode} — ${fillData.countryName}</span></div>`,
+      binInfo ? `<div class="bin-info-row">BIN: <span>${fillData.binScheme || '-'} ${fillData.binType || ''}${fillData.binBankName ? ' — ' + fillData.binBankName : ''}</span></div>` : '',
     ].join('');
 
     const statusLine = filled.length > 0
@@ -564,8 +596,6 @@ async function doGenFill() {
       setStatus('⚠️ Không tìm thấy form field nào để fill', 'error');
     } else {
       setStatus(`✅ Filled ${totalFilled} field${totalFilled > 1 ? 's' : ''}`, 'success');
-      // Auto-close popup after successful fill so user can see the form
-      setTimeout(() => window.close(), 1200);
     }
 
   } catch (e) {
@@ -579,6 +609,7 @@ async function doGenFill() {
 document.addEventListener('DOMContentLoaded', () => {
   // Restore last user-entered BIN (if any) and clear results on popup open
   const binInput = document.getElementById('binInput');
+  binInput.removeAttribute('maxlength');
   binInput.value = '';
   try {
     chrome.storage?.local.get(['savedBin'], (res) => {
@@ -607,7 +638,7 @@ document.addEventListener('DOMContentLoaded', () => {
   updateManualRow();
 
   // BIN input - only numbers + persist user-entered BIN
-  document.getElementById('binInput').addEventListener('input', function () {
+  binInput.addEventListener('input', function () {
     this.value = this.value.replace(/\D/g, '');
     try {
       chrome.storage?.local.set({ savedBin: this.value });

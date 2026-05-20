@@ -3,11 +3,16 @@
   "name": "CardFill Pro",
   "version": "1.0.0",
   "description": "BIN-based card generator & payment form autofiller for testing",
-  "permissions": ["activeTab", "scripting", "storage"],
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel"],
   "host_permissions": ["<all_urls>"],
   "action": {
-    "default_popup": "popup.html",
     "default_title": "CardFill Pro"
+  },
+  "background": {
+    "service_worker": "background.js"
+  },
+  "side_panel": {
+    "default_path": "popup.html"
   },
   "content_scripts": [
     {
