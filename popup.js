@@ -520,6 +520,22 @@ async function doGenFill() {
   const card = generateCard(opts.bin, opts);
   const fakeData = await generateFakeData(fillCountry);
 
+  // If user opted to use temp mail, create a fresh mailbox and use it as the
+  // email value for this fill — guaranteed unique by the temp-mail server.
+  const useTempMail = document.getElementById('useTempMail')?.checked;
+  if (useTempMail) {
+    try {
+      setStatus('📬 Creating temp mailbox...', 'loading');
+      const session = await startTempMailSession();
+      if (session && session.address) {
+        fakeData.email = session.address;
+      }
+    } catch (e) {
+      console.warn('temp mail create failed', e);
+      setStatus(`⚠️ Temp-mail lỗi: ${e.message} — fill bằng email giả`, 'error');
+    }
+  }
+
   const fillData = {
     cardNumber: card.number,
     month: card.month,
@@ -665,4 +681,406 @@ document.addEventListener('DOMContentLoaded', () => {
 
   // Make copyText global
   window.copyText = copyText;
+
+  // Wire temp-mail UI
+  initTempMail();
 });
+
+// =============================================================================
+// ========== TEMP MAIL (UI + POLLING) =========================================
+// =============================================================================
+
+let tmPollIntervalId = null;
+let tmCountdownIntervalId = null;
+
+function tmEl(id) { return document.getElementById(id); }
+
+async function initTempMail() {
+  // Settings toggle
+  tmEl('settingsBtn').addEventListener('click', toggleSettings);
+  tmEl('tmSaveBtn').addEventListener('click', saveSettings);
+  tmEl('tmTestBtn').addEventListener('click', testSettingsConnection);
+
+  // New mail / control buttons
+  tmEl('newMailBtn').addEventListener('click', onNewMailClicked);
+  tmEl('tmRefreshBtn').addEventListener('click', onRefreshClicked);
+  tmEl('tmStopBtn').addEventListener('click', stopActiveSession);
+  tmEl('tmCopyAddr').addEventListener('click', copyActiveAddress);
+  tmEl('tmOtpCopy').addEventListener('click', copyTopOtp);
+  tmEl('tmHistoryClear').addEventListener('click', clearHistory);
+
+  // Load config into Settings form
+  const cfg = await TempMail.getConfig();
+  tmEl('tmBaseUrl').value = cfg.baseUrl || '';
+  tmEl('tmSitePassword').value = cfg.sitePassword || '';
+  tmEl('tmDomain').value = cfg.domain || '';
+
+  // Restore active session + history on open
+  await renderActiveSession();
+  await renderHistory();
+
+  // React to storage changes (e.g. background.js detected new OTP)
+  chrome.storage.onChanged.addListener((changes, area) => {
+    if (area !== 'local') return;
+    if (changes[TempMail.STORAGE_KEYS.activeSession]) renderActiveSession();
+    if (changes[TempMail.STORAGE_KEYS.history]) renderHistory();
+  });
+
+  // If there is already an active, non-expired session, kick off live polling
+  const active = await TempMail.getActiveSession();
+  if (active && !isSessionExpired(active)) {
+    startLivePolling();
+  }
+}
+
+function toggleSettings() {
+  tmEl('tmSettings').classList.toggle('hidden');
+}
+
+async function saveSettings() {
+  const baseUrl = tmEl('tmBaseUrl').value.trim();
+  const sitePassword = tmEl('tmSitePassword').value;
+  const domain = tmEl('tmDomain').value.trim();
+  if (!baseUrl) {
+    setConfigStatus('⚠️ Base URL không được trống', 'err');
+    return;
+  }
+  if (!/^https?:\/\//.test(baseUrl)) {
+    setConfigStatus('⚠️ Base URL phải bắt đầu bằng http:// hoặc https://', 'err');
+    return;
+  }
+  await TempMail.saveConfig({ baseUrl, sitePassword, domain });
+  setConfigStatus('✅ Đã lưu cấu hình', 'ok');
+}
+
+async function testSettingsConnection() {
+  const baseUrl = tmEl('tmBaseUrl').value.trim().replace(/\/+$/, '');
+  const sitePassword = tmEl('tmSitePassword').value;
+  if (!baseUrl) {
+    setConfigStatus('⚠️ Nhập Base URL trước khi test', 'err');
+    return;
+  }
+  setConfigStatus('⏳ Đang test kết nối...', '');
+  try {
+    // Use open settings endpoint — no auth needed, but tells us if URL is correct
+    const headers = { 'x-lang': 'en' };
+    if (sitePassword) headers['x-custom-auth'] = sitePassword;
+    const res = await fetch(`${baseUrl}/open_api/settings`, { headers });
+    if (!res.ok) {
+      setConfigStatus(`❌ Server trả về ${res.status} — kiểm tra Base URL`, 'err');
+      return;
+    }
+    const data = await res.json();
+    const tier = [];
+    if (data.enableUserCreateEmail) tier.push('user-create:on');
+    else tier.push('user-create:OFF');
+    if (data.enableGlobalTurnstileCheck) tier.push('turnstile:ON (need disable)');
+    if (data.needAuth) tier.push('needs site-pass');
+    setConfigStatus(`✅ Kết nối OK — ${tier.join(', ')}`, 'ok');
+
+    // Auto-suggest a default domain if none set
+    if (!tmEl('tmDomain').value.trim() && Array.isArray(data.domains) && data.domains.length) {
+      tmEl('tmDomain').placeholder = `e.g. ${data.domains[0]}`;
+    }
+  } catch (e) {
+    setConfigStatus(`❌ ${e.message}`, 'err');
+  }
+}
+
+function setConfigStatus(msg, cls) {
+  const el = tmEl('tmConfigStatus');
+  el.textContent = msg;
+  el.classList.remove('ok', 'err');
+  if (cls) el.classList.add(cls);
+}
+
+function isSessionExpired(session) {
+  if (!session || !session.startedAt) return true;
+  const cfg = session.config || {};
+  const timeout = cfg.pollTimeoutMs || TempMail.DEFAULTS.pollTimeoutMs;
+  return (Date.now() - session.startedAt) > timeout;
+}
+
+// Create a new mailbox, set as active session, start polling.
+// Used by both "New Mail" button and GEN & FILL when "Use Mail" is checked.
+async function startTempMailSession() {
+  const cfg = await TempMail.getConfig();
+  if (!cfg.baseUrl) {
+    throw new Error('Chưa cấu hình Base URL (mở ⚙️ Settings)');
+  }
+  const { address, jwt, addressId } = await TempMail.createAddress({});
+  const session = {
+    address,
+    jwt,
+    addressId,
+    startedAt: Date.now(),
+    lastPolledAt: null,
+    mails: [],
+    otps: [],
+    expired: false,
+    config: {
+      pollIntervalMs: cfg.pollIntervalMs,
+      pollTimeoutMs: cfg.pollTimeoutMs,
+    },
+  };
+  await TempMail.setActiveSession(session);
+  await TempMail.pushHistory({ address, jwt, createdAt: Date.now() });
+  // Tell background to arm its slower keep-alive alarm
+  try {
+    chrome.runtime.sendMessage({ type: 'TEMPMAIL_SESSION_CHANGED' });
+  } catch (_) {}
+  startLivePolling();
+  return session;
+}
+
+async function onNewMailClicked() {
+  try {
+    setStatus('📬 Creating temp mailbox...', 'loading');
+    const session = await startTempMailSession();
+    setStatus(`✅ Mailbox sẵn sàng: ${session.address}`, 'success');
+  } catch (e) {
+    setStatus(`❌ Tạo mailbox lỗi: ${e.message}`, 'error');
+  }
+}
+
+async function onRefreshClicked() {
+  await pollActiveOnce();
+}
+
+async function stopActiveSession() {
+  stopLivePolling();
+  await TempMail.clearActiveSession();
+  try { chrome.runtime.sendMessage({ type: 'TEMPMAIL_SESSION_CHANGED' }); } catch (_) {}
+  await renderActiveSession();
+  setStatus('⏹ Đã dừng polling', 'info');
+}
+
+async function copyActiveAddress() {
+  const session = await TempMail.getActiveSession();
+  if (!session) return;
+  await navigator.clipboard.writeText(session.address);
+  const btn = tmEl('tmCopyAddr');
+  const orig = btn.textContent;
+  btn.textContent = '✓ Copied';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+}
+
+async function copyTopOtp() {
+  const session = await TempMail.getActiveSession();
+  const top = session && session.otps && session.otps[0];
+  if (!top) return;
+  await navigator.clipboard.writeText(top.code);
+  const btn = tmEl('tmOtpCopy');
+  const orig = btn.textContent;
+  btn.textContent = '✓ Copied';
+  btn.classList.add('copied');
+  setTimeout(() => { btn.textContent = orig; btn.classList.remove('copied'); }, 1500);
+}
+
+async function clearHistory() {
+  if (!confirm('Xoá lịch sử mailbox?')) return;
+  await chrome.storage.local.set({ [TempMail.STORAGE_KEYS.history]: [] });
+  await renderHistory();
+}
+
+function startLivePolling() {
+  stopLivePolling();
+  // Fire one immediate poll, then schedule periodic
+  pollActiveOnce();
+  TempMail.getConfig().then((cfg) => {
+    tmPollIntervalId = setInterval(pollActiveOnce, cfg.pollIntervalMs || 5000);
+  });
+  // Countdown timer for UI
+  tmCountdownIntervalId = setInterval(updatePollState, 1000);
+}
+
+function stopLivePolling() {
+  if (tmPollIntervalId) { clearInterval(tmPollIntervalId); tmPollIntervalId = null; }
+  if (tmCountdownIntervalId) { clearInterval(tmCountdownIntervalId); tmCountdownIntervalId = null; }
+}
+
+async function pollActiveOnce() {
+  const session = await TempMail.getActiveSession();
+  if (!session) { stopLivePolling(); return; }
+  if (isSessionExpired(session)) {
+    session.expired = true;
+    await TempMail.setActiveSession(session);
+    stopLivePolling();
+    await renderActiveSession();
+    return;
+  }
+  let changed = false;
+  try {
+    const data = await TempMail.listMails({ jwt: session.jwt, limit: 10, offset: 0 });
+    const results = (data && data.results) || [];
+    const known = new Set((session.mails || []).map((m) => m.id));
+    const newMails = results.filter((m) => !known.has(m.id));
+    if (newMails.length > 0) {
+      changed = true;
+      session.mails = [...newMails, ...(session.mails || [])].slice(0, 20);
+      for (const mail of newMails) {
+        const otps = TempMail.extractOtps(mail);
+        if (otps.length > 0) {
+          const top = otps[0];
+          session.otps = [{
+            code: top.code,
+            confidence: top.confidence,
+            mailId: mail.id,
+            subject: mail.subject,
+            sender: mail.sender,
+            receivedAt: mail.created_at,
+          }, ...(session.otps || [])].slice(0, 20);
+        }
+      }
+    }
+    if (session.lastPollError) { session.lastPollError = null; changed = true; }
+  } catch (e) {
+    if (session.lastPollError !== e.message) {
+      session.lastPollError = e.message;
+      changed = true;
+    }
+    console.warn('pollActiveOnce error', e);
+  }
+  session.lastPolledAt = Date.now();
+  if (changed) {
+    // Only persist when something visible changed — avoids flooding
+    // chrome.storage.onChanged listeners every 5s and resetting scroll.
+    await TempMail.setActiveSession(session);
+  }
+}
+
+function updatePollState() {
+  TempMail.getActiveSession().then((session) => {
+    if (!session) return;
+    const stateEl = tmEl('tmPollState');
+    if (!stateEl) return;
+    if (session.expired || isSessionExpired(session)) {
+      stateEl.className = 'tm-poll-state expired';
+      stateEl.textContent = 'expired';
+      stopLivePolling();
+      return;
+    }
+    if (session.lastPollError) {
+      stateEl.className = 'tm-poll-state error';
+      stateEl.textContent = `err: ${session.lastPollError}`;
+      return;
+    }
+    const cfg = session.config || {};
+    const timeout = cfg.pollTimeoutMs || TempMail.DEFAULTS.pollTimeoutMs;
+    const remaining = Math.max(0, timeout - (Date.now() - session.startedAt));
+    const mm = Math.floor(remaining / 60000);
+    const ss = Math.floor((remaining % 60000) / 1000).toString().padStart(2, '0');
+    stateEl.className = 'tm-poll-state active';
+    stateEl.textContent = `polling… ${mm}:${ss} left`;
+  });
+}
+
+async function renderActiveSession() {
+  const session = await TempMail.getActiveSession();
+  const panel = tmEl('tmPanel');
+  if (!session) {
+    panel.classList.add('hidden');
+    return;
+  }
+  panel.classList.remove('hidden');
+  tmEl('tmAddr').textContent = session.address;
+
+  // OTP box (top 1)
+  const top = session.otps && session.otps[0];
+  const otpBox = tmEl('tmOtpBox');
+  if (top) {
+    otpBox.classList.remove('hidden');
+    tmEl('tmOtpCode').textContent = top.code;
+    const ago = top.receivedAt ? ` · ${escapeHtml(top.receivedAt)}` : '';
+    const conf = top.confidence === 'high' ? '' : ` · confidence: ${top.confidence}`;
+    tmEl('tmOtpMeta').innerHTML = `<strong>${escapeHtml(top.subject || '(no subject)')}</strong><br>${escapeHtml(top.sender || '')}${conf}${ago}`;
+  } else {
+    otpBox.classList.add('hidden');
+  }
+
+  // Inbox list
+  const inboxList = tmEl('tmInboxList');
+  const inboxCount = tmEl('tmInboxCount');
+  inboxCount.textContent = (session.mails || []).length;
+  if (!session.mails || session.mails.length === 0) {
+    inboxList.innerHTML = '<div class="tm-empty">Chưa có mail. Đang chờ...</div>';
+  } else {
+    inboxList.innerHTML = session.mails.map((m) => {
+      const otps = TempMail.extractOtps(m);
+      const otpInline = otps[0] ? `<span class="tm-mail-otp-inline">${escapeHtml(otps[0].code)}</span>` : '';
+      return `
+        <div class="tm-mail">
+          <div class="tm-mail-subject">${escapeHtml(m.subject || '(no subject)')}${otpInline}</div>
+          <div class="tm-mail-meta">
+            <span>${escapeHtml(m.sender || m.source || '')}</span>
+            <span>${escapeHtml(m.created_at || '')}</span>
+          </div>
+        </div>`;
+    }).join('');
+  }
+
+  updatePollState();
+}
+
+async function renderHistory() {
+  const list = await TempMail.getHistory();
+  const wrap = tmEl('tmHistory');
+  const ul = tmEl('tmHistoryList');
+  if (!list || list.length === 0) {
+    wrap.classList.add('hidden');
+    return;
+  }
+  wrap.classList.remove('hidden');
+  ul.innerHTML = list.map((it) => {
+    const t = new Date(it.createdAt || 0);
+    const tstr = isNaN(t.getTime()) ? '' : t.toLocaleTimeString();
+    return `
+      <div class="tm-history-item">
+        <span class="tm-history-addr" title="${escapeHtml(it.address)}">${escapeHtml(it.address)}</span>
+        <span class="tm-history-time">${tstr}</span>
+        <button class="tm-mini-btn" data-tm-reopen="${escapeHtml(it.address)}" title="Reopen mailbox">↺</button>
+        <button class="tm-mini-btn" data-tm-copy="${escapeHtml(it.address)}" title="Copy">📋</button>
+      </div>`;
+  }).join('');
+  // Wire reopen / copy buttons
+  ul.querySelectorAll('[data-tm-reopen]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const addr = btn.getAttribute('data-tm-reopen');
+      const entry = (await TempMail.getHistory()).find((h) => h.address === addr);
+      if (!entry) return;
+      const cfg = await TempMail.getConfig();
+      const session = {
+        address: entry.address,
+        jwt: entry.jwt,
+        startedAt: Date.now(),
+        lastPolledAt: null,
+        mails: [],
+        otps: [],
+        expired: false,
+        config: { pollIntervalMs: cfg.pollIntervalMs, pollTimeoutMs: cfg.pollTimeoutMs },
+      };
+      await TempMail.setActiveSession(session);
+      try { chrome.runtime.sendMessage({ type: 'TEMPMAIL_SESSION_CHANGED' }); } catch (_) {}
+      startLivePolling();
+    });
+  });
+  ul.querySelectorAll('[data-tm-copy]').forEach((btn) => {
+    btn.addEventListener('click', async () => {
+      const addr = btn.getAttribute('data-tm-copy');
+      await navigator.clipboard.writeText(addr);
+      const orig = btn.textContent;
+      btn.textContent = '✓';
+      setTimeout(() => { btn.textContent = orig; }, 1000);
+    });
+  });
+}
+
+function escapeHtml(s) {
+  return String(s == null ? '' : s)
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}

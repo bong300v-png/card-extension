@@ -16,8 +16,31 @@
       <span class="brand">CARDFILL PRO</span>
       <div class="header-right">
         <span class="badge" id="langBadge">GB</span>
+        <button class="icon-btn" id="settingsBtn" title="Temp-mail settings">⚙️</button>
         <button class="icon-btn" id="themeBtn" title="Toggle theme">🌙</button>
       </div>
+    </div>
+
+    <!-- Temp-mail settings (collapsible) -->
+    <div class="tm-settings hidden" id="tmSettings">
+      <div class="tm-section-title">📮 Temp-mail server</div>
+      <div class="field-group" style="padding:0">
+        <label class="mini-label">Base URL</label>
+        <input type="text" id="tmBaseUrl" class="input" placeholder="https://mail.example.com" autocomplete="off">
+      </div>
+      <div class="field-group" style="padding:0">
+        <label class="mini-label">Site password (x-custom-auth)</label>
+        <input type="password" id="tmSitePassword" class="input" placeholder="leave empty if not required" autocomplete="off">
+      </div>
+      <div class="field-group" style="padding:0">
+        <label class="mini-label">Mail domain (optional)</label>
+        <input type="text" id="tmDomain" class="input" placeholder="e.g. drawo.ink" autocomplete="off">
+      </div>
+      <div class="btn-row" style="padding:0;margin-top:4px">
+        <button class="btn btn-genonly" id="tmTestBtn">🔌 Test</button>
+        <button class="btn btn-gen" id="tmSaveBtn">💾 Save</button>
+      </div>
+      <div class="tm-config-status" id="tmConfigStatus"></div>
     </div>
 
     <!-- BIN Input -->
@@ -42,6 +65,11 @@
         <input type="checkbox" id="randomMode">
         <span class="cb-box"></span>
         <span class="cb-icon">🎲</span> Random
+      </label>
+      <label class="cb-label">
+        <input type="checkbox" id="useTempMail" checked>
+        <span class="cb-box"></span>
+        <span class="cb-icon">📧</span> Mail
       </label>
     </div>
 
@@ -100,13 +128,59 @@
     <div class="btn-row">
       <button class="btn btn-fill" id="genFillBtn">🔥 GEN &amp; FILL</button>
       <button class="btn btn-genonly" id="genOnlyBtn">⚡ Gen Only</button>
+      <button class="btn btn-mail" id="newMailBtn">📬 New Mail</button>
     </div>
     <!-- Status -->
     <div class="status-bar" id="statusBar"></div>
 
+    <!-- Temp-mail panel -->
+    <div class="tm-panel hidden" id="tmPanel">
+      <div class="tm-mailbox">
+        <div class="tm-mailbox-label">📧 Current mailbox</div>
+        <div class="tm-mailbox-row">
+          <span class="tm-mailbox-addr" id="tmAddr">—</span>
+          <button class="copy-btn" id="tmCopyAddr">📋 Copy</button>
+        </div>
+        <div class="tm-meta">
+          <span class="tm-poll-state" id="tmPollState">idle</span>
+          <button class="tm-mini-btn" id="tmRefreshBtn" title="Refresh now">⟳</button>
+          <button class="tm-mini-btn" id="tmStopBtn" title="Stop polling">⏹</button>
+        </div>
+      </div>
+
+      <!-- OTP -->
+      <div class="tm-otp-box hidden" id="tmOtpBox">
+        <div class="tm-otp-label">🔑 OTP DETECTED</div>
+        <div class="tm-otp-code" id="tmOtpCode">------</div>
+        <div class="tm-otp-meta" id="tmOtpMeta"></div>
+        <button class="copy-btn" id="tmOtpCopy">📋 Copy OTP</button>
+      </div>
+
+      <!-- Inbox -->
+      <div class="tm-inbox">
+        <div class="tm-inbox-header">
+          <span>📥 Inbox</span>
+          <span class="tm-inbox-count" id="tmInboxCount">0</span>
+        </div>
+        <div class="tm-inbox-list" id="tmInboxList">
+          <div class="tm-empty">Chưa có mail. Đang chờ...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- History -->
+    <div class="tm-history hidden" id="tmHistory">
+      <div class="tm-history-header">
+        <span>🕘 Recent mailboxes</span>
+        <button class="tm-mini-btn" id="tmHistoryClear" title="Clear history">🗑</button>
+      </div>
+      <div class="tm-history-list" id="tmHistoryList"></div>
+    </div>
+
     <!-- Results -->
     <div class="results" id="results"></div>
   </div>
+  <script src="tempmail.js"></script>
   <script src="popup.js"></script>
 </body>
 </html>
