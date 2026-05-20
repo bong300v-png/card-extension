@@ -692,6 +692,7 @@ document.addEventListener('DOMContentLoaded', () => {
 
 let tmPollIntervalId = null;
 let tmCountdownIntervalId = null;
+let tmPollInFlight = false;
 
 function tmEl(id) { return document.getElementById(id); }
 
@@ -886,10 +887,21 @@ async function clearHistory() {
 
 function startLivePolling() {
   stopLivePolling();
-  // Fire one immediate poll, then schedule periodic
+  // Fire one immediate poll, then schedule periodic. Synchronously install
+  // a default-rate interval up-front so any subsequent stopLivePolling()
+  // call can always clear it. If the user-configured rate differs, we swap
+  // intervals once the config resolves — but only if we still own the slot
+  // (otherwise stopLivePolling() already nuked us, and creating a new
+  // interval here would leak it).
   pollActiveOnce();
+  const myInterval = setInterval(pollActiveOnce, TempMail.DEFAULTS.pollIntervalMs);
+  tmPollIntervalId = myInterval;
   TempMail.getConfig().then((cfg) => {
-    tmPollIntervalId = setInterval(pollActiveOnce, cfg.pollIntervalMs || 5000);
+    const desired = cfg.pollIntervalMs || TempMail.DEFAULTS.pollIntervalMs;
+    if (tmPollIntervalId !== myInterval) return;
+    if (desired === TempMail.DEFAULTS.pollIntervalMs) return;
+    clearInterval(myInterval);
+    tmPollIntervalId = setInterval(pollActiveOnce, desired);
   });
   // Countdown timer for UI
   tmCountdownIntervalId = setInterval(updatePollState, 1000);
@@ -901,6 +913,16 @@ function stopLivePolling() {
 }
 
 async function pollActiveOnce() {
+  if (tmPollInFlight) return;
+  tmPollInFlight = true;
+  try {
+    await _pollActiveOnce();
+  } finally {
+    tmPollInFlight = false;
+  }
+}
+
+async function _pollActiveOnce() {
   const session = await TempMail.getActiveSession();
   if (!session) { stopLivePolling(); return; }
   if (isSessionExpired(session)) {
