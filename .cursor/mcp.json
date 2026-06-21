@@ -1,0 +1,10 @@
+{
+  "mcpServers": {
+    "cloudglue-remote": {
+      "url": "https://mcp.cloudglue.dev/mcp",
+      "headers": {
+        "Authorization": "Bearer <CLOUDGLUE-API-KEY>"
+      }
+    }
+  }
+}

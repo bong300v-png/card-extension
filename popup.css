@@ -343,6 +343,38 @@ body.dark-mode .select {
   border-color: var(--text-muted);
 }
 
+.btn-mail {
+  background: #1a73e8;
+  color: #fff;
+}
+.btn-mail:hover {
+  background: #1558b0;
+}
+
+.btn-submit {
+  background: linear-gradient(135deg, #16a34a 0%, #15803d 100%);
+  color: #fff;
+  font-weight: 700;
+  font-size: 14px;
+  letter-spacing: 0.3px;
+  box-shadow: 0 2px 8px rgba(22,163,74,0.35);
+  border: none;
+}
+.btn-submit:hover {
+  background: linear-gradient(135deg, #15803d 0%, #166534 100%);
+  box-shadow: 0 4px 14px rgba(22,163,74,0.45);
+  transform: translateY(-1px);
+}
+.btn-submit:active {
+  transform: translateY(0);
+  box-shadow: 0 1px 4px rgba(22,163,74,0.3);
+}
+.btn-submit.loading {
+  opacity: 0.75;
+  cursor: not-allowed;
+  pointer-events: none;
+}
+
 /* Status Bar */
 .status-bar {
   padding: 0 14px;

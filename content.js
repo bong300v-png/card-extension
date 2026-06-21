@@ -1,9 +1,25 @@
 // Content Script - Form Filler
 
+// Guard: nếu đã inject rồi thì dừng ngay — tránh lỗi redeclare
+if (window.__cardFillExtLoaded) { /* already loaded */ }
+else { window.__cardFillExtLoaded = true;
+
+// Pick the right prototype so the native setter bypasses React's value tracker
+function getNativeValueSetter(el) {
+  const tag = el && el.tagName;
+  let proto;
+  if (tag === 'SELECT') proto = window.HTMLSelectElement.prototype;
+  else if (tag === 'TEXTAREA') proto = window.HTMLTextAreaElement.prototype;
+  else proto = window.HTMLInputElement.prototype;
+  return Object.getOwnPropertyDescriptor(proto, 'value').set;
+}
+
 function setVal(el, value) {
   if (!el) return false;
   try {
-    const nativeSetter = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, 'value').set;
+    // Reset React's internal value tracker so React detects the change
+    if (el._valueTracker) el._valueTracker.setValue('');
+    const nativeSetter = getNativeValueSetter(el);
     nativeSetter.call(el, value);
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
@@ -41,9 +57,16 @@ function setSelectVal(el, tryValues) {
         (optValue && lc.includes(optValue)) ||
         (optText && lc.includes(optText))
       ) {
-        el.value = opt.value;
+        try {
+          if (el._valueTracker) el._valueTracker.setValue('');
+          const nativeSetter = getNativeValueSetter(el);
+          nativeSetter.call(el, opt.value);
+        } catch (_) {
+          el.value = opt.value;
+        }
         el.dispatchEvent(new Event('change', { bubbles: true }));
         el.dispatchEvent(new Event('input', { bubbles: true }));
+        el.dispatchEvent(new Event('blur', { bubbles: true }));
         return true;
       }
     }
@@ -127,7 +150,7 @@ function findField(selectors, labelKeywords = []) {
   return null;
 }
 
-function fillForm(data) {
+async function fillForm(data) {
   const results = [];
 
   // tryFill with label support
@@ -142,7 +165,7 @@ function fillForm(data) {
     }
   }
 
-  // Card number — IMPORTANT: avoid broad selectors that match name/other fields
+  // Card number
   tryFill('Card Number', [
     '[autocomplete="cc-number"]',
     '[name*="card_number"]', '[name*="cardnumber"]', '[name*="card-number"]',
@@ -151,10 +174,12 @@ function fillForm(data) {
     '[id*="cardNumber"]',
     '[data-elements-stable-field-name="cardNumber"]',
     '[data-field="cardNumber"]', '[data-testid*="card-number"]',
+    // aria-label (Stripe Elements dùng cái này, không phụ thuộc ngôn ngữ UI)
+    'input[aria-label*="Card number"]', 'input[aria-label*="card number"]',
+    'input[aria-label*="Card Number"]', 'input[aria-label*="卡号"]',
     'input[placeholder*="Card number"]', 'input[placeholder*="card number"]',
     'input[placeholder*="1234 5678"]', 'input[placeholder*="•••• ••••"]'
   ], el => {
-    // Fill exact number string (no spaces) to prevent masking script interference
     return setVal(el, data.cardNumber);
   }, ['card number', 'card no', 'card details', 'số thẻ']);
 
@@ -163,6 +188,9 @@ function fillForm(data) {
     '[autocomplete="cc-exp"]',
     '[name*="expiry"]', '[name*="expdate"]', '[name*="exp_date"]',
     '[name*="card_exp"]', '[id*="expiry"]', '[id*="cardExpiry"]',
+    // aria-label (Stripe dùng "Expiration", "Expiry date")
+    'input[aria-label*="Expir"]', 'input[aria-label*="expir"]',
+    'input[aria-label*="到期"]', 'input[aria-label*="Valid"]',
     'input[placeholder*="MM / YY"]', 'input[placeholder*="MM/YY"]',
     'input[placeholder*="MM/YYYY"]'
   ]);
@@ -195,6 +223,10 @@ function fillForm(data) {
     '[name*="cvv"]', '[name*="cvc"]', '[name*="csc"]',
     '[name*="security_code"]', '[name*="security-code"]',
     '[id*="cvv"]', '[id*="cvc"]', '[id*="cardCvc"]',
+    // aria-label (Stripe dùng "CVC", "Security code")
+    'input[aria-label*="CVC"]', 'input[aria-label*="CVV"]',
+    'input[aria-label*="Security code"]', 'input[aria-label*="security code"]',
+    'input[aria-label*="安全码"]',
     'input[placeholder*="CVV"]', 'input[placeholder*="CVC"]',
     'input[placeholder*="security"]', 'input[placeholder*="123"]'
   ], el => setVal(el, data.cvv));
@@ -291,6 +323,9 @@ function fillForm(data) {
     if (el.tagName === 'SELECT') return setSelectVal(el, [data.countryCode, data.countryName]);
     return setVal(el, data.countryName);
   });
+
+  // Give React-controlled forms a tick to re-render ZIP/State validation rules based on new country
+  await sleep(200);
 
   // Address line 1
   tryFill('Address', [
@@ -418,18 +453,128 @@ function fillForm(data) {
   return results;
 }
 
+
+// ── Submit Form ──────────────────────────────────────────────
+/**
+ * Tìm và click nút submit trên trang hiện tại.
+ * Thứ tự ưu tiên (giống stripe_pay.py nhưng bổ sung nhiều fallback
+ * để hoạt động trên nhiều ngôn ngữ / nhiều loại trang):
+ *  1. CSS class cố định của Stripe (không phụ thuộc ngôn ngữ)
+ *  2. button[type="submit"] visible
+ *  3. input[type="submit"] visible
+ *  4. Nút có text khớp các từ khoá (đa ngôn ngữ)
+ *  5. aria-label khớp từ khoá
+ *  6. Fallback: submit form trực tiếp
+ */
+function findAndClickSubmit() {
+  // 1. Stripe-specific class (language-agnostic)
+  const stripeBtn = document.querySelector('button.SubmitButton');
+  if (stripeBtn && isVisible(stripeBtn)) {
+    stripeBtn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    stripeBtn.click();
+    return { found: true, method: 'stripe-class' };
+  }
+
+  // 2. button[type="submit"] — visible first
+  const submitBtns = Array.from(document.querySelectorAll('button[type="submit"], input[type="submit"]'));
+  const visibleSubmit = submitBtns.find(el => isVisible(el));
+  if (visibleSubmit) {
+    visibleSubmit.scrollIntoView({ block: 'center', behavior: 'smooth' });
+    visibleSubmit.click();
+    return { found: true, method: 'type-submit' };
+  }
+
+  // 3. Button with matching text / value (multi-language)
+  const SUBMIT_KEYWORDS = [
+    // English
+    'submit', 'pay', 'place order', 'buy now', 'confirm', 'checkout',
+    'subscribe', 'complete', 'purchase', 'continue', 'proceed',
+    // Vietnamese
+    'đặt hàng', 'thanh toán', 'xác nhận', 'mua ngay', 'tiếp tục', 'hoàn thành',
+    // Chinese
+    '提交', '支付', '确认', '下单', '购买', '继续',
+    // Spanish
+    'pagar', 'confirmar', 'comprar', 'enviar',
+    // French
+    'payer', 'confirmer', 'commander', 'envoyer',
+    // German
+    'bestellen', 'bezahlen', 'kaufen', 'weiter',
+    // Portuguese
+    'pagar', 'confirmar', 'comprar',
+    // Japanese
+    '購入', '注文', '支払',
+  ];
+
+  const allBtns = Array.from(document.querySelectorAll('button, [role="button"]'));
+  for (const btn of allBtns) {
+    if (!isVisible(btn)) continue;
+    const text = (btn.textContent || btn.innerText || btn.value || '').trim().toLowerCase();
+    const ariaLabel = (btn.getAttribute('aria-label') || '').toLowerCase();
+    const combined = text + ' ' + ariaLabel;
+    if (SUBMIT_KEYWORDS.some(kw => combined.includes(kw))) {
+      btn.scrollIntoView({ block: 'center', behavior: 'smooth' });
+      btn.click();
+      return { found: true, method: 'keyword-match', text: text.slice(0, 30) };
+    }
+  }
+
+  // 4. Any hidden type=submit (fallback for multi-step forms)
+  if (submitBtns.length > 0) {
+    submitBtns[0].click();
+    return { found: true, method: 'hidden-submit' };
+  }
+
+  // 5. Submit the form directly (last resort)
+  const form = document.querySelector('form');
+  if (form) {
+    const fakeSubmit = document.createElement('input');
+    fakeSubmit.type = 'submit';
+    fakeSubmit.style.display = 'none';
+    form.appendChild(fakeSubmit);
+    fakeSubmit.click();
+    form.removeChild(fakeSubmit);
+    return { found: true, method: 'form-submit' };
+  }
+
+  return { found: false, method: 'none' };
+}
+
 chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message.type === 'FILL_FORM') {
+    latestFillData = message.data;
+    fillForm(message.data)
+      .then(results => sendResponse({ success: true, results }))
+      .catch(e => sendResponse({ success: false, error: e.message }));
+  }
+
+  // FILL_AND_SUBMIT: fill xong → đợi Stripe/React render → submit ngay trong frame này
+  // Học từ stripe_pay.py: fill và submit trong cùng browser context, không relay qua popup
+  if (message.type === 'FILL_AND_SUBMIT') {
+    latestFillData = message.data;
+    fillForm(message.data)
+      .then(async (results) => {
+        // Đợi 1500ms để React/Stripe re-render sau khi điền
+        await new Promise(r => setTimeout(r, 1500));
+        const submitResult = findAndClickSubmit();
+        sendResponse({ success: true, results, submit: submitResult });
+      })
+      .catch(e => sendResponse({ success: false, error: e.message }));
+  }
+
+  if (message.type === 'SUBMIT_FORM') {
     try {
-      latestFillData = message.data;
-      const results = fillForm(message.data);
-      sendResponse({ success: true, results });
+      const result = findAndClickSubmit();
+      sendResponse({ success: result.found, method: result.method, text: result.text });
     } catch (e) {
       sendResponse({ success: false, error: e.message });
     }
   }
+
   if (message.type === 'PING') {
     sendResponse({ alive: true });
   }
   return true;
 });
+
+
+} // end guard

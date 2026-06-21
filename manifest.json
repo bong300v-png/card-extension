@@ -3,7 +3,7 @@
   "name": "CardFill Pro",
   "version": "1.1.0",
   "description": "BIN-based card generator, payment form autofiller, and temp-mail with OTP capture for testing",
-  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "alarms", "notifications"],
+  "permissions": ["activeTab", "scripting", "storage", "sidePanel", "alarms", "notifications", "webNavigation"],
   "host_permissions": ["<all_urls>"],
   "action": {
     "default_title": "CardFill Pro",

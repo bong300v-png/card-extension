@@ -23,15 +23,36 @@ const COUNTRY_DATA = {
   US: {
     name: 'United States', flag: '🇺🇸',
     phone: () => `+1 ${rand(200,999)}-${rand(100,999)}-${rand(1000,9999)}`,
-    streets: ['Main St','Oak Ave','Maple Dr','Cedar Ln','Elm St','Park Blvd','Lake Rd'],
+    // ✅ Tax-free states only (0% sales tax): OR, MT, DE, NH, AK
+    streets: ['SW Park Ave','NE Fremont St','E 13th Ave','Liberty St NE','Simpson Ave',
+              'N Broadway','N Higgins Ave','W Main St','N Last Chance Gulch',
+              'N King St','S Governors Ave','E Main St',
+              'Elm St','Main St',
+              'W 5th Ave','Cushman St','Marine Way'],
     locations: [
-      { city: 'New York', state: 'NY', zip: '10001' },
-      { city: 'Los Angeles', state: 'CA', zip: '90001' },
-      { city: 'Chicago', state: 'IL', zip: '60601' },
-      { city: 'Houston', state: 'TX', zip: '77001' },
-      { city: 'Miami', state: 'FL', zip: '33101' },
-      { city: 'Seattle', state: 'WA', zip: '98101' },
-      { city: 'Boston', state: 'MA', zip: '02108' }
+      // Oregon (no sales tax)
+      { city: 'Portland',  state: 'OR', zip: '97205' },
+      { city: 'Portland',  state: 'OR', zip: '97211' },
+      { city: 'Eugene',    state: 'OR', zip: '97401' },
+      { city: 'Salem',     state: 'OR', zip: '97301' },
+      { city: 'Bend',      state: 'OR', zip: '97702' },
+      // Montana (no sales tax)
+      { city: 'Billings',  state: 'MT', zip: '59101' },
+      { city: 'Missoula',  state: 'MT', zip: '59801' },
+      { city: 'Bozeman',   state: 'MT', zip: '59715' },
+      { city: 'Helena',    state: 'MT', zip: '59601' },
+      // Delaware (no sales tax)
+      { city: 'Wilmington',state: 'DE', zip: '19801' },
+      { city: 'Dover',     state: 'DE', zip: '19901' },
+      { city: 'Newark',    state: 'DE', zip: '19711' },
+      // New Hampshire (no sales tax)
+      { city: 'Manchester',state: 'NH', zip: '03101' },
+      { city: 'Nashua',    state: 'NH', zip: '03060' },
+      { city: 'Concord',   state: 'NH', zip: '03301' },
+      // Alaska (no sales tax)
+      { city: 'Anchorage', state: 'AK', zip: '99501' },
+      { city: 'Fairbanks', state: 'AK', zip: '99701' },
+      { city: 'Juneau',    state: 'AK', zip: '99801' }
     ]
   },
   ES: {
@@ -283,7 +304,7 @@ function generateCard(bin, opts = {}) {
 // ========== FAKE DATA ==========
 async function generateFakeData(countryCode) {
   const c = COUNTRY_DATA[countryCode] || COUNTRY_DATA.US;
-  
+
   // Base data using our hardcoded fallback
   let firstName = pick(FIRST_NAMES);
   let lastName = pick(LAST_NAMES);
@@ -295,9 +316,28 @@ async function generateFakeData(countryCode) {
   let zip = loc.zip || '';
   let phone = c.phone ? c.phone() : '';
 
+  // Postcode format per country — randomuser.me sometimes returns wrong-format codes (e.g. 5-digit for AU)
+  const POSTCODE_PATTERNS = {
+    US: /^\d{5}(-\d{4})?$/,
+    CA: /^[A-Z]\d[A-Z] ?\d[A-Z]\d$/i,
+    GB: /^[A-Z]{1,2}\d[A-Z\d]? ?\d[A-Z]{2}$/i,
+    AU: /^\d{4}$/,
+    DE: /^\d{5}$/,
+    FR: /^\d{5}$/,
+    IT: /^\d{5}$/,
+    ES: /^\d{5}$/,
+    NL: /^\d{4} ?[A-Z]{2}$/i,
+    BR: /^\d{5}-?\d{3}$/,
+    MX: /^\d{5}$/,
+    JP: /^\d{3}-?\d{4}$/,
+    SG: /^\d{6}$/,
+    VN: /^\d{6}$/,
+    TH: /^\d{5}$/
+  };
+
   // Supported randomuser.me nationalities
   const supportedNats = ['AU', 'BR', 'CA', 'CH', 'DE', 'DK', 'ES', 'FI', 'FR', 'GB', 'IE', 'IN', 'IR', 'MX', 'NL', 'NO', 'NZ', 'RS', 'TR', 'UA', 'US'];
-  
+
   if (supportedNats.includes(countryCode)) {
     try {
       setStatus('⏳ Fetching real address data...', 'loading');
@@ -312,7 +352,16 @@ async function generateFakeData(countryCode) {
           street = user.location.street.name;
           city = user.location.city;
           state = user.location.state;
-          zip = String(user.location.postcode);
+          const apiZip = String(user.location.postcode);
+          // Validate API postcode against country format; if mismatched, keep entire hardcoded address triple for internal consistency
+          const pattern = POSTCODE_PATTERNS[countryCode];
+          if (pattern && !pattern.test(apiZip)) {
+            city = loc.city || city;
+            state = loc.state || state;
+            zip = loc.zip || apiZip;
+          } else {
+            zip = apiZip;
+          }
           phone = user.phone;
         }
       }
@@ -551,36 +600,27 @@ async function doGenFill() {
     binType: binInfo?.type || ''
   };
 
-  setStatus('⚡ Filling form...', 'loading');
+  setStatus('⚡ Generating & filling...', 'loading');
   clearResults();
 
   try {
     const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
 
-    // Inject content script
-    try {
-      await chrome.scripting.executeScript({
-        target: { tabId: tab.id, allFrames: true },
-        files: ['content.js']
-      });
-    } catch (_) {}
-
+    // Gửi FILL_AND_SUBMIT — content script sẽ fill xong rồi tự submit sau 1.5s
     let response = null;
     try {
-      response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_FORM', data: fillData });
+      response = await chrome.tabs.sendMessage(tab.id, { type: 'FILL_AND_SUBMIT', data: fillData });
     } catch (msgErr) {
-      // Content script not reachable (chrome:// pages, etc.)
-      setStatus('⚠️ Trang này không cho phép inject script', 'error');
+      setStatus('⚠️ Reload trang rồi bấm lại (content script chưa load)', 'error');
       return;
     }
 
-    // Show card info
     addResult(renderCard(card));
 
-    // Build fill summary from results
     const results = response?.results || [];
     const filled  = results.filter(r => r.status === 'ok').map(r => r.field);
     const skipped = results.filter(r => r.status === 'skip').map(r => r.field);
+    const sub     = response?.submit;
 
     const summaryRows = [
       `<div class="bin-info-row">Name: <span>${fillData.name}</span></div>`,
@@ -597,29 +637,33 @@ async function doGenFill() {
       ? `<div style="font-size:10px;color:#10b981;margin-top:5px">✅ Filled: ${filled.join(', ')}</div>`
       : '';
     const skipLine = skipped.length > 0
-      ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">⏭ Not found: ${skipped.join(', ')}</div>`
+      ? `<div style="font-size:10px;color:#94a3b8;margin-top:2px">⏭ Skipped: ${skipped.join(', ')}</div>`
+      : '';
+    const submitLine = sub
+      ? `<div style="font-size:10px;margin-top:2px;color:${sub.found ? '#10b981' : '#f59e0b'}">${sub.found ? '🚀 Submitted (' + sub.method + ')' : '⚠️ Submit btn not found'}</div>`
       : '';
 
     addResult(`
       <div class="bin-info">
         <div class="bin-info-title">📋 Fill Data</div>
         <div class="bin-info-grid">${summaryRows}</div>
-        ${statusLine}${skipLine}
+        ${statusLine}${skipLine}${submitLine}
       </div>`);
 
-    const totalFilled = filled.length;
-    if (totalFilled === 0) {
-      setStatus('⚠️ Không tìm thấy form field nào để fill', 'error');
+    if (filled.length === 0) {
+      setStatus('⚠️ Không tìm thấy field nào để fill', 'error');
+    } else if (sub?.found) {
+      setStatus(`✅ Filled ${filled.length} field${filled.length > 1 ? 's' : ''} & Submitted!`, 'success');
     } else {
-      setStatus(`✅ Filled ${totalFilled} field${totalFilled > 1 ? 's' : ''}`, 'success');
+      setStatus(`✅ Filled ${filled.length} field${filled.length > 1 ? 's' : ''} (no submit btn found)`, 'success');
     }
 
   } catch (e) {
-    // Never crash — just show soft warning
-    setStatus('⚠️ Không fill được — thử reload trang rồi bấm lại', 'error');
+    setStatus('⚠️ Lỗi — reload trang rồi bấm lại', 'error');
     console.warn('GenFill error:', e);
   }
 }
+
 
 // ========== EVENT LISTENERS ==========
 document.addEventListener('DOMContentLoaded', () => {
@@ -661,19 +705,30 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (_) {}
   });
 
-  // Buttons
+  // Mail toggle — restore + persist state across popup opens
+  const mailCb = document.getElementById('useTempMail');
+  if (mailCb) {
+    try {
+      chrome.storage?.local.get(['useTempMail'], (res) => {
+        mailCb.checked = !!res.useTempMail;
+      });
+      mailCb.addEventListener('change', () => {
+        chrome.storage?.local.set({ useTempMail: mailCb.checked });
+      });
+    } catch (_) {}
+  }
+
   document.getElementById('generateBtn').addEventListener('click', doGenerate);
   document.getElementById('validateBtn').addEventListener('click', doValidate);
   document.getElementById('binCheckBtn').addEventListener('click', doBinCheck);
   document.getElementById('genFillBtn').addEventListener('click', doGenFill);
   document.getElementById('genOnlyBtn').addEventListener('click', doGenerate);
 
-  // Enter key on BIN input
   document.getElementById('binInput').addEventListener('keydown', (e) => {
     if (e.key === 'Enter') doGenerate();
   });
 
-  // Theme toggle (light/dark placeholder)
+  // Theme toggle
   document.getElementById('themeBtn').addEventListener('click', () => {
     document.getElementById('themeBtn').textContent =
       document.getElementById('themeBtn').textContent === '🌙' ? '☀️' : '🌙';
